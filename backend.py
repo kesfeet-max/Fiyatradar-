@@ -5,14 +5,14 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# SerpApi'den aldığın anahtarı buraya tırnak içine yapıştır
-SERP_API_KEY = "d43c689b60f306d44001fdc112fb5ed4ba69163a82ba87dac55b78c2a7449950"
+# 🔑 SerpApi'den aldığın anahtarı buraya tırnak içine yapıştır
+SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
 def get_real_prices_with_api(product_name):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_shopping",
-        "q": f"{product_name} fiyatı",
+        "q": product_name,
         "hl": "tr",
         "gl": "tr",
         "api_key": SERP_API_KEY
@@ -26,15 +26,15 @@ def get_real_prices_with_api(product_name):
         shopping_results = data.get("shopping_results", [])
         
         results = []
-        for item in shopping_results[:3]: # En ucuz 3 sonuç
+        for item in shopping_results[:3]: # En iyi 3 sonucu al
             results.append({
-                "site": item.get("source", "Bilinmeyen Site"),
+                "site": item.get("source", "Satıcı"),
                 "price": item.get("price", "Fiyat Yok"),
                 "link": item.get("link", "#")
             })
         return results
     except Exception as e:
-        print(f"API Hatası: {e}")
+        print(f"Hata: {e}")
         return []
 
 @app.route("/", methods=["GET"])
@@ -49,9 +49,10 @@ def compare():
     data = request.get_json(silent=True) or {}
     title = data.get("title", "")
     
-    # Arama terimini sadeleştir (Model adını al)
-    search_title = ' '.join(title.split()[:4])
+    # Çok uzun ürün başlıklarını temizle (ilk 5 kelimeyi al)
+    search_title = ' '.join(title.split()[:5])
     
+    # API ile gerçek verileri çek
     results = get_real_prices_with_api(search_title)
     
     if not results:
