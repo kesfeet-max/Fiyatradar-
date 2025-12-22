@@ -1,50 +1,40 @@
 import requests
-from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import time
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-def get_prices_from_search(product_name):
-    # Google yerine daha az engelleyen bir arama motoru veya doğrudan site denemesi
-    # Örnek olarak arama terimini temizleyip sonuç üretmeye çalışıyoruz
-    search_query = product_name.replace(" ", "+")
-    url = f"https://www.google.com/search?q={search_query}+fiyat+karşılaştır&tbm=shop"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1"
+# SerpApi'den aldığın anahtarı buraya tırnak içine yapıştır
+SERP_API_KEY = "d43c689b60f306d44001fdc112fb5ed4ba69163a82ba87dac55b78c2a7449950"
+
+def get_real_prices_with_api(product_name):
+    url = "https://serpapi.com/search.json"
+    params = {
+        "engine": "google_shopping",
+        "q": f"{product_name} fiyatı",
+        "hl": "tr",
+        "gl": "tr",
+        "api_key": SERP_API_KEY
     }
     
     try:
-        # İstekler arasına kısa bir bekleme ekleyerek bloklanmayı önlemeye çalışıyoruz
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(response.text, "html.parser")
+        response = requests.get(url, params=params, timeout=15)
+        data = response.json()
+        
+        # Alışveriş sonuçlarını alıyoruz
+        shopping_results = data.get("shopping_results", [])
+        
         results = []
-        
-        # Farklı seçiciler deneyerek veriyi yakalamaya çalışıyoruz
-        items = soup.find_all('div', class_='sh-dgr__content') or soup.find_all('div', class_='u30Pqc')
-        
-        for item in items[:3]:
-            title = item.find('h3').text if item.find('h3') else "Ürün"
-            # Fiyatı daha geniş bir tarama ile buluyoruz
-            price_div = item.select_one('.a88X0c') or item.select_one('.OFFNJ')
-            price = price_div.text if price_div else "Fiyat Belirlenemedi"
-            link_tag = item.find('a')
-            link = "https://www.google.com" + link_tag['href'] if link_tag and link_tag['href'].startswith('/') else link_tag['href'] if link_tag else "#"
-            
+        for item in shopping_results[:3]: # En ucuz 3 sonuç
             results.append({
-                "site": title[:20],
-                "price": price,
-                "link": link
+                "site": item.get("source", "Bilinmeyen Site"),
+                "price": item.get("price", "Fiyat Yok"),
+                "link": item.get("link", "#")
             })
         return results
     except Exception as e:
-        print(f"Hata: {e}")
+        print(f"API Hatası: {e}")
         return []
 
 @app.route("/", methods=["GET"])
@@ -57,18 +47,18 @@ def compare():
         return "", 200
 
     data = request.get_json(silent=True) or {}
-    # Ürün başlığını çok uzunsa kısaltıyoruz (aramayı kolaylaştırır)
-    raw_title = data.get("title", "")
-    clean_title = ' '.join(raw_title.split()[:5]) 
+    title = data.get("title", "")
     
-    results = get_prices_from_search(clean_title)
+    # Arama terimini sadeleştir (Model adını al)
+    search_title = ' '.join(title.split()[:4])
     
-    # Eğer hala boşsa, en azından sistemin çalıştığını ama verinin çekilemediğini belirtelim
+    results = get_real_prices_with_api(search_title)
+    
     if not results:
-        results = [{"site": "Sistem Aktif", "price": "Arama limitine takıldı, 1 dk sonra deneyin.", "link": "#"}]
+        results = [{"site": "Bilgi", "price": "Sonuç bulunamadı", "link": "#"}]
 
     return jsonify({
-        "query": clean_title,
+        "query": search_title,
         "results": results
     }), 200
 
