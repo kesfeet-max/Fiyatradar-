@@ -6,40 +6,48 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# 🔍 Gerçek fiyatları çeken fonksiyon
 def get_real_prices(product_name):
+    # Aramayı daha spesifik hale getirmek için "fiyatı" kelimesini ekliyoruz
     search_url = f"https://www.google.com/search?q={product_name}+fiyatı&tbm=shop"
+    
+    # Google'ı gerçek bir kullanıcı olduğumuza ikna etmek için tarayıcı bilgileri
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.google.com/"
     }
     
     try:
-        response = requests.get(search_url, headers=headers, timeout=10)
+        response = requests.get(search_url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
         
         results = []
-        # Google Shopping ürün bloklarını tarıyoruz
-        items = soup.select('.sh-dgr__content')[:3] # En iyi 3 sonuç
+        # Google Shopping'in kullandığı farklı blok sınıflarını deniyoruz
+        items = soup.find_all('div', class_='sh-dgr__content')
         
-        for item in items:
-            title_tag = item.select_one('h3')
-            price_tag = item.select_one('.a88X0c')
-            link_tag = item.select_one('a')
+        for item in items[:3]: # En ucuz ilk 3 sonuç
+            name = item.find('h3').text if item.find('h3') else "Ürün"
+            price = item.select_one('.a88X0c').text if item.select_one('.a88X0c') else "Fiyat Bilgisi Yok"
+            link_tag = item.find('a')
+            link = "https://www.google.com" + link_tag['href'] if link_tag else "#"
             
-            if title_tag and price_tag:
-                results.append({
-                    "site": title_tag.text[:20] + "...",
-                    "price": price_tag.text,
-                    "link": "https://www.google.com" + link_tag['href'] if link_tag else "#"
-                })
+            # Fiyat bilgisini temizle (Örn: "15.000 TL*" -> "15.000 TL")
+            clean_price = price.split('*')[0].strip()
+            
+            results.append({
+                "site": name[:25] + "...",
+                "price": clean_price,
+                "link": link
+            })
+            
         return results
     except Exception as e:
-        print(f"Hata oluştu: {e}")
+        print(f"Hata detayi: {e}")
         return []
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok", "message": "Fiyat Radar Backend Aktif"}), 200
 
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
@@ -48,22 +56,18 @@ def compare():
 
     data = request.get_json(silent=True) or {}
     title = data.get("title", "")
-    price = data.get("price", "")
-    url = data.get("url", "")
-
-    # Canlı veriyi çekiyoruz
-    results = get_real_prices(title)
     
-    # Eğer canlı veri çekilemezse (boş dönerse) yedek olarak eski listeyi gösterir
+    # Arama motoru için ürün adını temizle
+    search_title = title.split('-')[0].strip() if '-' in title else title
+    
+    results = get_real_prices(search_title)
+    
     if not results:
-        results = [
-            {"site": "Bilgi", "price": "Anlık fiyat bulunamadı", "link": "#"}
-        ]
+        # Eğer hala bulunamazsa kullanıcıya bilgi ver
+        results = [{"site": "Bilgi", "price": "Şu an fiyat çekilemiyor, lütfen az sonra tekrar deneyin.", "link": "#"}]
 
     return jsonify({
-        "query": title,
-        "current_price": price,
-        "source_url": url,
+        "query": search_title,
         "results": results
     }), 200
 
