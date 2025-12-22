@@ -24,7 +24,7 @@ def get_real_prices_with_api(product_name):
         shopping_results = data.get("shopping_results", [])
         
         results = []
-        for item in shopping_results[:3]:
+        for item in shopping_results[:20]:
             # 🚀 Link Sorununu Çözen Kısım: Farklı link türlerini kontrol ediyoruz
             actual_link = item.get("link") or item.get("product_link") or "#"
             
@@ -66,3 +66,4 @@ def compare():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
