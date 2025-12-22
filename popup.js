@@ -34,7 +34,7 @@ document.getElementById('compare').addEventListener('click', async () => {
   renderProduct(product);
   try {
     // Call backend (you must run backend and set correct URL)
-    const resp = await fetch('http://localhost:5000/compare', {
+    const resp = await fetch('const API_URL = "https://fiyatradar-3mcl.onrender.com/compare";', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({title: product.title, url: product.url})
