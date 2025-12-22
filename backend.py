@@ -5,7 +5,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# 🔑 SerpApi'den aldığın anahtarı buraya tırnak içine yapıştır
+# 🔑 SerpApi Anahtarın
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
 def get_real_prices_with_api(product_name):
@@ -21,16 +21,17 @@ def get_real_prices_with_api(product_name):
     try:
         response = requests.get(url, params=params, timeout=15)
         data = response.json()
-        
-        # Alışveriş sonuçlarını alıyoruz
         shopping_results = data.get("shopping_results", [])
         
         results = []
-        for item in shopping_results[:3]: # En iyi 3 sonucu al
+        for item in shopping_results[:3]:
+            # 🚀 Link Sorununu Çözen Kısım: Farklı link türlerini kontrol ediyoruz
+            actual_link = item.get("link") or item.get("product_link") or "#"
+            
             results.append({
                 "site": item.get("source", "Satıcı"),
                 "price": item.get("price", "Fiyat Yok"),
-                "link": item.get("link", "#")
+                "link": actual_link 
             })
         return results
     except Exception as e:
@@ -49,10 +50,10 @@ def compare():
     data = request.get_json(silent=True) or {}
     title = data.get("title", "")
     
-    # Çok uzun ürün başlıklarını temizle (ilk 5 kelimeyi al)
+    # Arama terimini optimize et (ilk 5 kelime)
     search_title = ' '.join(title.split()[:5])
     
-    # API ile gerçek verileri çek
+    # API'den sonuçları çek
     results = get_real_prices_with_api(search_title)
     
     if not results:
