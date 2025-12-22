@@ -41,7 +41,7 @@ def get_real_prices_with_api(product_name):
         
         results = []
         # 🎯 GELİR POTANSİYELİ: Sonuç sayısını 20'ye çıkardık
-        for item in shopping_results[:20]:
+        for item in shopping_results[:10]:
             actual_link = item.get("link") or item.get("product_link") or "#"
             
             # 💰 AFFILIATE MANTIĞI BURAYA GELECEK:
@@ -85,3 +85,4 @@ def compare():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
