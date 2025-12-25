@@ -23,9 +23,9 @@ def compare():
     data = request.get_json(silent=True) or {}
     title = data.get("title", "")
     orig_price_str = data.get("original_price", "0")
-    base_price = clean_price(orig_price_str) # Sayfadaki gerçek fiyat
+    base_price = clean_price(orig_price_str)
 
-    # Arama terimini optimize et
+    # Arama terimini optimize et (Model adını kapsayacak şekilde ilk 5 kelime)
     search_query = ' '.join(title.split()[:5])
     
     url = "https://serpapi.com/search.json"
@@ -42,26 +42,34 @@ def compare():
         shopping_results = response.json().get("shopping_results", [])
         
         final_results = []
-        # Screenshot_42'deki kirliliği temizleyen yasaklı kelimeler
+        # Yedek parça kirliliğini temizleyen liste
         forbidden = ["yedek", "parça", "filtre", "deterjan", "hortum", "başlık", "aksesuar"]
 
-        for item in shopping_results:
+        for item in shopping_results[:20]:
+            # Link hatasını çözmek için hiyerarşik link kontrolü
+            actual_link = item.get("link") or item.get("product_link")
+            
+            if not actual_link:
+                continue
+
             item_price = clean_price(item.get("price", "0"))
             item_title = item.get("title", "").lower()
             
-            # FİLTRE: Fiyat orijinalin %40'ından düşükse veya yasaklı kelime varsa EKLEME
+            # Akıllı Filtreleme
             is_accessory = any(word in item_title for word in forbidden)
             is_too_cheap = item_price < (base_price * 0.4) if base_price > 0 else False
             
             if not is_accessory and not is_too_cheap:
                 final_results.append({
+                    "title": item.get("title", ""),
                     "site": item.get("source", "Satıcı"),
                     "price": item.get("price", "Fiyat Yok"),
-                    "link": item.get("link")
+                    "link": actual_link 
                 })
 
-        return jsonify({"results": final_results[:10]}) # En iyi 10 temiz sonuç
-    except:
+        return jsonify({"results": final_results[:10]}) 
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
         return jsonify({"results": []}), 500
 
 if __name__ == "__main__":
