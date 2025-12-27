@@ -10,6 +10,7 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 def clean_price(price_str):
     try:
+        # Fiyat metninden sadece sayıları ve kuruşu ayıklar
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
     except:
@@ -20,17 +21,17 @@ def compare():
     if request.method == "OPTIONS": return "", 200
     
     data = request.get_json(silent=True) or {}
+    # Başlığın tamamını alıyoruz (Kısıtlama kaldırıldı)
     title = data.get("title", "")
     orig_price_str = data.get("original_price", "0")
     base_price = clean_price(orig_price_str)
 
-    search_query = ' '.join(title.split()[:5])
-    
+    # SERP API parametreleri: hl=tr ve gl=tr Türkiye sonuçlarını zorlar
     params = {
         "engine": "google_shopping",
-        "q": search_query,
+        "q": title, 
         "hl": "tr",
-        "gl": "tr", # Sadece Türkiye bölgesini zorla
+        "gl": "tr",
         "api_key": SERP_API_KEY
     }
 
@@ -39,14 +40,8 @@ def compare():
         shopping_results = response.json().get("shopping_results", [])
         
         best_prices = {}
-        # Yabancı siteleri tamamen engellemek için geniş liste
-        forbidden_sites = [
-            "microless", "al jedayel", "desertcart", "ubuy", "amazon.com", 
-            "ebay", "aliexpress", "speedcomputers.biz", ".com", ".net", ".org"
-        ]
-        
-        # Kesinlikle izin verilen Türkiye domainleri
-        allowed_extensions = [".com.tr", ".com/tr", ".tr", "n11.com", "trendyol.com", "hepsiburada.com", "teknosa.com", "vatanbilgisayar.com"]
+        # Yabancı siteleri engellemek için kara liste
+        blacklist = ["microless", "al jedayel", "desertcart", "ubuy", "speedcomputers", "ebay", "aliexpress", "u-buy"]
 
         for item in shopping_results:
             site_name = item.get("source", "").lower()
@@ -55,18 +50,21 @@ def compare():
             
             if not actual_link or item_price == 0: continue
 
-            # FİLTRE 1: Yabancı site kontrolü (Sadece TR uzantılı veya bilindik siteler)
-            is_tr = any(ext in site_name or ext in actual_link for ext in allowed_extensions)
-            is_forbidden = any(f in site_name for f in forbidden_sites)
-            
-            if not is_tr or is_forbidden:
+            # FİLTRE 1: Yabancı site engelleme
+            if any(bad in site_name for bad in blacklist):
                 continue
 
-            # FİLTRE 2: Sadece orijinal fiyattan DAHA UCUZ olanları getir
-            if base_price > 0 and item_price >= base_price:
+            # FİLTRE 2: Sadece Türkiye siteleri (.tr uzantısı veya büyük yerli pazaryerleri)
+            is_tr = any(ext in actual_link.lower() for ext in [".tr", "n11.com", "trendyol.com", "hepsiburada.com", "ciceksepeti.com"])
+            if not is_tr:
                 continue
 
-            # FİLTRE 3: Site başına sadece en ucuz sonucu tut
+            # FİLTRE 3: Sadece DAHA UCUZ olanları getir
+            # 10.000 TL'lik üründe 9.995 TL ve altını kabul eder
+            if base_price > 0 and item_price >= (base_price - 1):
+                continue
+
+            # Her siteden sadece en düşük fiyatı seç
             if site_name not in best_prices or item_price < best_prices[site_name]['price_num']:
                 best_prices[site_name] = {
                     "title": item.get("title", ""),
@@ -76,7 +74,7 @@ def compare():
                     "link": actual_link 
                 }
 
-        # Fiyata göre sırala (En ucuz en üstte)
+        # En ucuzdan başlayarak sırala
         final_results = sorted(best_prices.values(), key=lambda x: x['price_num'])
         
         output = []
