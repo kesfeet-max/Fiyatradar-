@@ -16,14 +16,6 @@ def clean_price(price_str):
     except:
         return 0.0
 
-def clean_title(title):
-    # Arama kalitesini bozan gereksiz kelimeleri temizle
-    noise_words = ["dizüstü", "bilgisayar", "laptop", "dos", "fhd", "ips"]
-    query = title.lower()
-    for word in noise_words:
-        query = query.replace(word, "")
-    return " ".join(query.split())
-
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
     if request.method == "OPTIONS": return "", 200
@@ -33,64 +25,54 @@ def compare():
     orig_price_str = data.get("original_price", "0")
     base_price = clean_price(orig_price_str)
 
-    # Başlığı analiz et ve temizle
-    search_query = clean_title(full_title)
+    # 1. Deneme: Tam başlık | 2. Deneme: İlk 6 kelime (Marka/Model odağı)
+    search_queries = [full_title, " ".join(full_title.split()[:6])]
     
-    params = {
-        "engine": "google_shopping",
-        "q": search_query,
-        "hl": "tr",
-        "gl": "tr", # Sadece Türkiye sonuçlarını getir
-        "api_key": SERP_API_KEY
-    }
+    shopping_results = []
+    for q in search_queries:
+        if not q: continue
+        params = {"engine": "google_shopping", "q": q, "hl": "tr", "gl": "tr", "api_key": SERP_API_KEY}
+        try:
+            r = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
+            res = r.json().get("shopping_results", [])
+            if res:
+                shopping_results = res
+                break
+        except: continue
 
-    try:
-        response = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
-        shopping_results = response.json().get("shopping_results", [])
+    best_prices = {}
+    # Yasaklı yabancı siteler
+    blacklist = ["microless", "al jedayel", "desertcart", "ubuy", "speedcomputers", "ebay", "aliexpress", "u-buy"]
+
+    for item in shopping_results:
+        site_name = item.get("source", "").lower()
+        link = item.get("link") or item.get("product_link")
+        price = clean_price(item.get("price", "0"))
         
-        best_prices = {}
-        # Yabancı siteleri kesin olarak engelle
-        blacklist = ["microless", "al jedayel", "desertcart", "ubuy", "speedcomputers", "ebay", "aliexpress"]
+        if not link or price == 0: continue
+        if any(bad in site_name for bad in blacklist): continue
 
-        for item in shopping_results:
-            site_name = item.get("source", "").lower()
-            actual_link = item.get("link") or item.get("product_link")
-            item_price = clean_price(item.get("price", "0"))
-            
-            if not actual_link or item_price == 0: continue
+        # Sadece TR siteleri (Domain veya büyük pazaryerleri)
+        is_tr = any(ext in link.lower() for ext in [".tr", "n11.com", "trendyol.com", "hepsiburada.com", "vatanbilgisayar", "teknosa", "pazarama", "ciceksepeti"])
+        if not is_tr: continue
 
-            # FİLTRE 1: Kara liste kontrolü (1 tane bile yabancı çıkmasın)
-            if any(bad in site_name for bad in blacklist): continue
+        # FİLTRE: Eğer aranan ürün bulunamıyorsa eşiği biraz yükseltiyoruz (+200 TL hata payı)
+        # Bu sayede manuel gördüğün tüm ucuz seçenekler listeye girer
+        if base_price > 0 and price > (base_price + 200): continue
 
-            # FİLTRE 2: Sadece Türkiye domainleri
-            is_tr = any(ext in actual_link.lower() for ext in [".tr", "n11.com", "trendyol.com", "hepsiburada.com", "vatanbilgisayar", "teknosa"])
-            if not is_tr: continue
+        if site_name not in best_prices or price < best_prices[site_name]['price_num']:
+            best_prices[site_name] = {
+                "title": item.get("title", ""),
+                "site": item.get("source", "Satıcı"),
+                "price": item.get("price", "Fiyat Yok"),
+                "price_num": price,
+                "link": link 
+            }
 
-            # FİLTRE 3: Sadece DAHA UCUZ olanları getir
-            # Senin gördüğün o 2.000 TL farkı burada yakalıyoruz
-            if base_price > 0 and item_price >= (base_price - 10): continue
+    results = sorted(best_prices.values(), key=lambda x: x['price_num'])
+    for r in results: del r['price_num']
 
-            # Site başına en ucuzunu al
-            if site_name not in best_prices or item_price < best_prices[site_name]['price_num']:
-                best_prices[site_name] = {
-                    "title": item.get("title", ""),
-                    "site": item.get("source", "Satıcı"),
-                    "price": item.get("price", "Fiyat Yok"),
-                    "price_num": item_price,
-                    "link": actual_link 
-                }
-
-        # En ucuzdan pahalıya sırala
-        final_results = sorted(best_prices.values(), key=lambda x: x['price_num'])
-        
-        output = []
-        for res in final_results:
-            del res['price_num']
-            output.append(res)
-
-        return jsonify({"results": output}) 
-    except:
-        return jsonify({"results": []}), 500
+    return jsonify({"results": results})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
