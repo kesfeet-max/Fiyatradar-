@@ -10,63 +10,58 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 def clean_price(price_str):
     try:
-        # Fiyatı sayıya dönüştürür (51.343,06 -> 51343.06)
+        # Fiyatı sayıya çevirir: '46.796,84 TL' -> 46796.84
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
-    except:
-        return 0.0
+    except: return 0.0
 
 @app.route("/compare", methods=["POST"])
 def compare():
     data = request.get_json()
     full_title = data.get("title", "")
-    orig_price = clean_price(data.get("original_price", "0"))
+    orig_price_str = data.get("original_price", "0")
+    base_price = clean_price(orig_price_str)
 
-    # ZEKİ ARAMA: Eğer tam başlık sonuç vermezse diye kısa versiyonu da hazırlıyoruz
+    # Aramayı sadeleştiriyoruz ki Google daha çok ucuz seçenek bulsun
     search_query = " ".join(full_title.split()[:5]) 
 
     params = {
         "engine": "google_shopping",
         "q": search_query,
-        "hl": "tr",
-        "gl": "tr", # Sadece Türkiye sonuçları
+        "hl": "tr", "gl": "tr",
         "api_key": SERP_API_KEY
     }
 
     try:
         response = requests.get("https://serpapi.com/search.json", params=params)
         shopping_results = response.json().get("shopping_results", [])
-    except:
-        return jsonify({"results": []})
+    except: return jsonify({"results": []})
 
-    best_prices = {}
-    # Güvenli Türkiye mağazaları ve genel pazaryerleri
-    whitelist = ["trendyol", "hepsiburada", "n11", "amazon.com.tr", "vatan", "teknosa", "pazarama", "koctas", "ciceksepeti"]
+    cheap_results = []
+    # Sadece Türkiye siteleri
+    whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "vatanbilgisayar"]
 
     for item in shopping_results:
         site = item.get("source", "").lower()
-        price = clean_price(item.get("price", "0"))
+        price_val = clean_price(item.get("price", "0"))
         link = item.get("link")
 
-        if not link or price == 0: continue
-        
-        # Sadece bilinen TR siteleri veya TR uzantılı linkler
-        is_tr_site = any(w in site for w in whitelist) or ".tr" in link.lower()
-        
-        if is_tr_site:
-            if site not in best_prices or price < best_prices[site]['price_num']:
-                best_prices[site] = {
-                    "site": item.get("source"),
-                    "price": item.get("price"),
-                    "link": link,
-                    "price_num": price
-                }
+        # FİLTRE: Eğer bulduğumuz fiyat, senin baktığın fiyattan ucuzsa veya 
+        # çok küçük bir fark varsa listeye alıyoruz. Pahalı olanları eliyoruz.
+        # (base_price * 1.02) -> Senin fiyatından %2'den daha pahalı olanları göstermez.
+        if base_price > 0 and price_val > (base_price * 1.02):
+            continue 
 
-    # Sonuçları fiyata göre sırala ve listeye çevir
-    final_list = sorted(best_prices.values(), key=lambda x: x['price_num'])
-    for item in final_list: del item['price_num']
+        if any(w in site for w in whitelist) or ".tr" in link.lower():
+            cheap_results.append({
+                "site": item.get("source"),
+                "price": item.get("price"),
+                "link": link,
+                "price_num": price_val
+            })
 
-    return jsonify({"results": final_list})
+    # En ucuzu en tepeye koy
+    sorted_results = sorted(cheap_results, key=lambda x: x['price_num'])
+    for item in sorted_results: del item['price_num']
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    return jsonify({"results": sorted_results})
