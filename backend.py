@@ -19,8 +19,8 @@ def compare():
     data = request.get_json()
     full_title = data.get("title", "")
     
-    # Arama terimini sadeleştiriyoruz ki sonuç çıksın
-    search_query = " ".join(full_title.split()[:5]) 
+    # Arama terimini optimize et (Çok uzun başlıklar sonuç vermez)
+    search_query = " ".join(full_title.split()[:6]) 
 
     params = {
         "engine": "google_shopping",
@@ -30,21 +30,24 @@ def compare():
     }
 
     try:
-        response = requests.get("https://serpapi.com/search.json", params=params, timeout=20)
+        response = requests.get("https://serpapi.com/search.json", params=params, timeout=25)
         shopping_results = response.json().get("shopping_results", [])
     except: return jsonify({"results": []})
 
     final_results = []
-    # Sadece TR odaklı pazaryerleri
-    whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "koctas"]
+    # Yasaklı (TR dışı) kelimeler
+    blacklist = ["microless", "desertcart", "ubuy", "ebay", "aliexpress", "u-buy"]
 
     for item in shopping_results:
         site = item.get("source", "").lower()
         price_val = clean_price(item.get("price", "0"))
-        link = item.get("link")
+        link = item.get("link", "")
 
-        # PAHALI FİLTRESİNİ SİLDİK: Her şeyi getir, kullanıcı en ucuzu seçsin
-        if any(w in site for w in whitelist) or ".tr" in link.lower():
+        # Yabancı siteleri engelle
+        if any(bad in site for bad in blacklist): continue
+        
+        # Sadece Türkiye odaklı sonuçları ekle
+        if ".tr" in link or any(tr in site for tr in ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "idefix"]):
             final_results.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
@@ -52,7 +55,7 @@ def compare():
                 "price_num": price_val
             })
 
-    # En ucuzdan en pahalıya sırala
+    # En ucuza göre sırala (Senin istediğin gibi ucuzlar en üstte)
     sorted_list = sorted(final_results, key=lambda x: x['price_num'])
     for item in sorted_list: del item['price_num']
 
