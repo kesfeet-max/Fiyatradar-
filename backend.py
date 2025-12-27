@@ -10,7 +10,6 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 def clean_price(price_str):
     try:
-        # Fiyatı sayıya çevirir
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
     except:
@@ -31,7 +30,7 @@ def compare():
         "engine": "google_shopping",
         "q": search_query,
         "hl": "tr",
-        "gl": "tr", # Sadece Türkiye sonuçlarını zorla
+        "gl": "tr", # Sadece Türkiye bölgesini zorla
         "api_key": SERP_API_KEY
     }
 
@@ -39,49 +38,49 @@ def compare():
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
         shopping_results = response.json().get("shopping_results", [])
         
-        # Site bazlı en ucuzları tutmak için sözlük
         best_prices = {}
+        # Yabancı siteleri tamamen engellemek için geniş liste
+        forbidden_sites = [
+            "microless", "al jedayel", "desertcart", "ubuy", "amazon.com", 
+            "ebay", "aliexpress", "speedcomputers.biz", ".com", ".net", ".org"
+        ]
         
-        forbidden_keywords = ["yedek", "parça", "filtre", "deterjan", "hortum", "aparat", "başlık", "aksesuar"]
-        # Yabancı siteleri engellemek için liste
-        forbidden_sites = ["microless", "al jedayel", "desertcart", "ubuy", "amazon.com", "ebay", "aliexpress"]
+        # Kesinlikle izin verilen Türkiye domainleri
+        allowed_extensions = [".com.tr", ".com/tr", ".tr", "n11.com", "trendyol.com", "hepsiburada.com", "teknosa.com", "vatanbilgisayar.com"]
 
         for item in shopping_results:
-            site_name = item.get("source", "Bilinmeyen Satıcı")
-            site_key = site_name.lower()
+            site_name = item.get("source", "").lower()
             actual_link = item.get("link") or item.get("product_link")
-            
-            if not actual_link: continue
-
-            # FİLTRE 1: Yabancı site engelleme
-            if any(forbidden in site_key for forbidden in forbidden_sites) or site_key.endswith(".com"):
-                if "com.tr" not in site_key: # .com.tr ise izin ver
-                    continue
-
             item_price = clean_price(item.get("price", "0"))
-            item_title = item.get("title", "").lower()
             
-            # FİLTRE 2: Aksesuar ve Fiyat Sapma Kontrolü
-            is_accessory = any(word in item_title for word in forbidden_keywords)
-            is_too_cheap = item_price < (base_price * 0.4) if base_price > 0 else False
-            
-            if not is_accessory and not is_too_cheap:
-                # FİLTRE 3: Site başına sadece en ucuzu seç
-                if site_key not in best_prices or item_price < best_prices[site_key]['price_num']:
-                    best_prices[site_key] = {
-                        "title": item.get("title", ""),
-                        "site": site_name,
-                        "price": item.get("price", "Fiyat Yok"),
-                        "price_num": item_price,
-                        "link": actual_link 
-                    }
+            if not actual_link or item_price == 0: continue
 
-        # Sözlüğü listeye çevir ve fiyata göre sırala
+            # FİLTRE 1: Yabancı site kontrolü (Sadece TR uzantılı veya bilindik siteler)
+            is_tr = any(ext in site_name or ext in actual_link for ext in allowed_extensions)
+            is_forbidden = any(f in site_name for f in forbidden_sites)
+            
+            if not is_tr or is_forbidden:
+                continue
+
+            # FİLTRE 2: Sadece orijinal fiyattan DAHA UCUZ olanları getir
+            if base_price > 0 and item_price >= base_price:
+                continue
+
+            # FİLTRE 3: Site başına sadece en ucuz sonucu tut
+            if site_name not in best_prices or item_price < best_prices[site_name]['price_num']:
+                best_prices[site_name] = {
+                    "title": item.get("title", ""),
+                    "site": item.get("source", "Satıcı"),
+                    "price": item.get("price", "Fiyat Yok"),
+                    "price_num": item_price,
+                    "link": actual_link 
+                }
+
+        # Fiyata göre sırala (En ucuz en üstte)
         final_results = sorted(best_prices.values(), key=lambda x: x['price_num'])
         
-        # 'price_num' bilgisini temizleyip gönder
         output = []
-        for res in final_results[:10]:
+        for res in final_results:
             del res['price_num']
             output.append(res)
 
