@@ -4,75 +4,69 @@ from flask_cors import CORS
 import re
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
 def clean_price(price_str):
     try:
-        # Fiyatı sayıya çevirir: '51.343,06 TL' -> 51343.06
+        # Fiyatı sayıya dönüştürür (51.343,06 -> 51343.06)
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
     except:
         return 0.0
 
-@app.route("/compare", methods=["POST", "OPTIONS"])
+@app.route("/compare", methods=["POST"])
 def compare():
-    if request.method == "OPTIONS": return "", 200
-    
-    data = request.get_json(silent=True) or {}
+    data = request.get_json()
     full_title = data.get("title", "")
-    orig_price_str = data.get("original_price", "0")
-    base_price = clean_price(orig_price_str)
+    orig_price = clean_price(data.get("original_price", "0"))
 
-    # 1. Deneme: Tam başlık | 2. Deneme: İlk 6 kelime (Marka/Model odağı)
-    search_queries = [full_title, " ".join(full_title.split()[:6])]
-    
-    shopping_results = []
-    for q in search_queries:
-        if not q: continue
-        params = {"engine": "google_shopping", "q": q, "hl": "tr", "gl": "tr", "api_key": SERP_API_KEY}
-        try:
-            r = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
-            res = r.json().get("shopping_results", [])
-            if res:
-                shopping_results = res
-                break
-        except: continue
+    # ZEKİ ARAMA: Eğer tam başlık sonuç vermezse diye kısa versiyonu da hazırlıyoruz
+    search_query = " ".join(full_title.split()[:5]) 
+
+    params = {
+        "engine": "google_shopping",
+        "q": search_query,
+        "hl": "tr",
+        "gl": "tr", # Sadece Türkiye sonuçları
+        "api_key": SERP_API_KEY
+    }
+
+    try:
+        response = requests.get("https://serpapi.com/search.json", params=params)
+        shopping_results = response.json().get("shopping_results", [])
+    except:
+        return jsonify({"results": []})
 
     best_prices = {}
-    # Yasaklı yabancı siteler
-    blacklist = ["microless", "al jedayel", "desertcart", "ubuy", "speedcomputers", "ebay", "aliexpress", "u-buy"]
+    # Güvenli Türkiye mağazaları ve genel pazaryerleri
+    whitelist = ["trendyol", "hepsiburada", "n11", "amazon.com.tr", "vatan", "teknosa", "pazarama", "koctas", "ciceksepeti"]
 
     for item in shopping_results:
-        site_name = item.get("source", "").lower()
-        link = item.get("link") or item.get("product_link")
+        site = item.get("source", "").lower()
         price = clean_price(item.get("price", "0"))
-        
+        link = item.get("link")
+
         if not link or price == 0: continue
-        if any(bad in site_name for bad in blacklist): continue
+        
+        # Sadece bilinen TR siteleri veya TR uzantılı linkler
+        is_tr_site = any(w in site for w in whitelist) or ".tr" in link.lower()
+        
+        if is_tr_site:
+            if site not in best_prices or price < best_prices[site]['price_num']:
+                best_prices[site] = {
+                    "site": item.get("source"),
+                    "price": item.get("price"),
+                    "link": link,
+                    "price_num": price
+                }
 
-        # Sadece TR siteleri (Domain veya büyük pazaryerleri)
-        is_tr = any(ext in link.lower() for ext in [".tr", "n11.com", "trendyol.com", "hepsiburada.com", "vatanbilgisayar", "teknosa", "pazarama", "ciceksepeti"])
-        if not is_tr: continue
+    # Sonuçları fiyata göre sırala ve listeye çevir
+    final_list = sorted(best_prices.values(), key=lambda x: x['price_num'])
+    for item in final_list: del item['price_num']
 
-        # FİLTRE: Eğer aranan ürün bulunamıyorsa eşiği biraz yükseltiyoruz (+200 TL hata payı)
-        # Bu sayede manuel gördüğün tüm ucuz seçenekler listeye girer
-        if base_price > 0 and price > (base_price + 200): continue
-
-        if site_name not in best_prices or price < best_prices[site_name]['price_num']:
-            best_prices[site_name] = {
-                "title": item.get("title", ""),
-                "site": item.get("source", "Satıcı"),
-                "price": item.get("price", "Fiyat Yok"),
-                "price_num": price,
-                "link": link 
-            }
-
-    results = sorted(best_prices.values(), key=lambda x: x['price_num'])
-    for r in results: del r['price_num']
-
-    return jsonify({"results": results})
+    return jsonify({"results": final_list})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
