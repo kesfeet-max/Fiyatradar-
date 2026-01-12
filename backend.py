@@ -8,7 +8,6 @@ CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
-# Sunucunun uyanıp uyanmadığını anlamak için ana sayfa ekledik
 @app.route("/", methods=["GET"])
 def home():
     return "Fiyat Radarı Sunucusu Aktif!"
@@ -16,7 +15,7 @@ def home():
 def clean_price(price_str):
     if not price_str: return 0.0
     try:
-        # Fiyattaki TL, nokta ve virgülleri temizler
+        # '549,90 TL' -> '549.90' formatına kesin dönüşüm
         cleaned = str(price_str).replace('TL', '').replace(' ', '').replace('.', '')
         cleaned = cleaned.replace(',', '.')
         return float(re.sub(r'[^\d.]', '', cleaned))
@@ -28,7 +27,7 @@ def compare():
     full_title = data.get("title", "")
     current_page_price = clean_price(data.get("original_price", "0"))
     
-    # Arama terimini optimize et
+    # Arama terimini sadeleştir
     search_query = " ".join(full_title.split()[:5]) 
 
     params = {
@@ -48,7 +47,7 @@ def compare():
         site = item.get("source", "").lower()
         found_price_val = clean_price(item.get("price", "0"))
         
-        # SADECE UCUZ OLANLAR: Mevcut fiyattan pahalıysa gösterme
+        # KRİTİK FİLTRE: Sadece senin fiyatından (Örn: 549 TL) DAHA UCUZ olanları al
         if current_page_price > 0 and found_price_val >= current_page_price:
             continue
 
@@ -60,11 +59,8 @@ def compare():
                 "price_num": found_price_val
             })
 
-    # En ucuzdan pahalıya sırala
+    # En ucuza göre sırala
     sorted_list = sorted(cheap_results, key=lambda x: x['price_num'])
     for item in sorted_list: del item['price_num']
 
     return jsonify({"results": sorted_list})
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
