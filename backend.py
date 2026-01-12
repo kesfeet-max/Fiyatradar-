@@ -13,14 +13,18 @@ def compare():
     try:
         data = request.get_json()
         full_title = data.get("title", "")
-        # Aramayı stabilize etmek için ilk 3 kelimeyi alıyoruz
-        search_query = " ".join(re.sub(r'[^\w\s]', '', full_title).split()[:3])
+        
+        # HATA DÜZELTME: Sadece ilk 3-4 kelimeyi alarak arama yapmak bazen alakasız sonuç döndürür.
+        # "Poco F8 Pro" gibi kritik kelimeleri koruyup, gereksiz ekleri (Ram, Hafıza vb.) temizliyoruz.
+        search_query = " ".join(full_title.split()[:5]) 
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr"
+            "hl": "tr",
+            "gl": "tr",
+            "num": "15" # Daha fazla sonuç çekip içinden doğru olanları seçeceğiz
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
@@ -29,16 +33,20 @@ def compare():
         final_results = []
         whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama"]
 
+        # ALAKASIZ ÜRÜN FİLTRESİ
+        main_keyword = search_query.split()[0].lower() # Örn: "Poco"
+
         for item in results:
             source = item.get("source", "").lower()
-            # ÖNEMLİ: Linkin varlığını ve doğruluğunu burada garantiye alıyoruz
-            direct_link = item.get("link") or item.get("product_link") or item.get("shopping_results_link")
+            title = item.get("title", "").lower()
+            link = item.get("link") or item.get("product_link") or item.get("shopping_results_link")
             
-            if any(w in source for w in whitelist) and direct_link:
+            # Eğer ürün başlığında aradığımız ana marka/kelime yoksa (Poco bakarken Roborock gelmesi gibi) eliyoruz
+            if main_keyword in title and any(w in source for w in whitelist) and link:
                 final_results.append({
                     "site": item.get("source"),
                     "price": item.get("price"),
-                    "link": direct_link # Link burada mutlaka tanımlanıyor
+                    "link": link
                 })
         
         return jsonify({"results": final_results[:6]})
