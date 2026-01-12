@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 
-# Loglardaki NameError hatasını bitiren ana tanım
+# Sunucunun çökmesini engelleyen kritik başlangıç
 app = Flask(__name__)
 CORS(app)
 
@@ -11,7 +11,7 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 @app.route("/", methods=["GET", "HEAD"])
 def home():
-    return "Fiyat Radarı Sunucusu Aktif!"
+    return "Fiyat Radarı Aktif!"
 
 def clean_price(price_str):
     if not price_str: return 0.0
@@ -30,12 +30,10 @@ def compare():
         data = request.get_json()
         full_title = data.get("title", "")
         
-        # Arama optimizasyonu: Sadece ilk 3 kelimeyi al (Sonuç bulma garantisi)
+        # Arama terimini sadeleştir (İstikrarlı sonuç için ilk 3 anahtar kelime)
         words = re.sub(r'[^\w\s]', '', full_title).split()
         search_query = " ".join(words[:3]) 
         
-        current_price = clean_price(data.get("original_price", "0"))
-
         params = {
             "engine": "google_shopping",
             "q": search_query,
@@ -51,18 +49,14 @@ def compare():
 
         for item in results:
             source = item.get("source", "").lower()
-            price_val = clean_price(item.get("price"))
-            link = item.get("link")
-
-            if any(w in source for w in whitelist) and link:
+            if any(w in source for w in whitelist) and item.get("link"):
                 cheap_results.append({
                     "site": item.get("source"),
                     "price": item.get("price"),
-                    "link": link,
-                    "p_val": price_val
+                    "link": item.get("link"),
+                    "p_val": clean_price(item.get("price"))
                 })
         
-        # En ucuzu en üste getir
         sorted_results = sorted(cheap_results, key=lambda x: x['p_val'])
         for x in sorted_results: del x['p_val']
 
