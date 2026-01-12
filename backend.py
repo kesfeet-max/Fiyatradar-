@@ -8,45 +8,40 @@ CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
-@app.route("/", methods=["GET", "HEAD"])
-def home():
-    return "Fiyat Radarı Sistemi Aktif!"
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
         data = request.get_json()
         full_title = data.get("title", "")
-        
-        # CİMRİ MANTIĞI: Başlıktaki marka ve model dışındaki gereksiz kelimeleri atıyoruz
-        # Sadece ilk 3 kelime ile arama yaparak Google'dan sonuç gelmesini garanti ediyoruz.
-        clean_query = re.sub(r'[^\w\s]', '', full_title).split()
-        search_query = " ".join(clean_query[:3]) 
+        # Aramayı stabilize etmek için ilk 3 kelimeyi alıyoruz
+        search_query = " ".join(re.sub(r'[^\w\s]', '', full_title).split()[:3])
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
-            "hl": "tr", "gl": "tr",
-            "api_key": SERP_API_KEY
+            "api_key": SERP_API_KEY,
+            "hl": "tr", "gl": "tr"
         }
 
-        # Render zaman aşımını önlemek için hızlı cevap istiyoruz
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
         results = response.json().get("shopping_results", [])
         
-        final_list = []
+        final_results = []
         whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama"]
 
         for item in results:
             source = item.get("source", "").lower()
-            if any(w in source for w in whitelist):
-                final_list.append({
+            # ÖNEMLİ: Linkin varlığını ve doğruluğunu burada garantiye alıyoruz
+            direct_link = item.get("link") or item.get("product_link") or item.get("shopping_results_link")
+            
+            if any(w in source for w in whitelist) and direct_link:
+                final_results.append({
                     "site": item.get("source"),
                     "price": item.get("price"),
-                    "link": item.get("link")
+                    "link": direct_link # Link burada mutlaka tanımlanıyor
                 })
         
-        return jsonify({"results": final_list[:6]})
+        return jsonify({"results": final_results[:6]})
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
