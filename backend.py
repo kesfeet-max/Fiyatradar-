@@ -10,7 +10,7 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 def clean_price(price_str):
     try:
-        # Sayısal olmayan karakterleri temizler ve kuruş ayrımını yapar
+        # Fiyatı sayıya çevirir (Örn: 35.499 TL -> 35499.0)
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
     except: return 0.0
@@ -19,9 +19,10 @@ def clean_price(price_str):
 def compare():
     data = request.get_json()
     full_title = data.get("title", "")
-    current_price = clean_price(data.get("original_price", "0")) 
+    # Mevcut sayfanın fiyatını alıyoruz
+    current_page_price = clean_price(data.get("original_price", "0"))
     
-    # Arama terimini optimize eder (ilk 5 kelime)
+    # Arama terimini sadeleştir (İlk 5 kelime)
     search_query = " ".join(full_title.split()[:5]) 
 
     params = {
@@ -37,23 +38,17 @@ def compare():
     except: return jsonify({"results": []})
 
     cheap_results = []
-    # Yasaklı yabancı siteler
-    blacklist = ["microless", "desertcart", "ubuy", "ebay", "aliexpress"]
-    # Güvenilir TR siteleri
-    whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "idefix", "mediamarkt"]
+    whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "mediamarkt"]
 
     for item in shopping_results:
         site = item.get("source", "").lower()
         found_price_val = clean_price(item.get("price", "0"))
         link = item.get("link", "")
 
-        if any(bad in site for bad in blacklist): continue
-
-        # SADECE UCUZ OLANLAR: Mevcut fiyattan pahalıysa listeye alma
-        if current_price > 0 and found_price_val >= current_price:
+        # FİLTRE: Sadece senin fiyatından DAHA UCUZ olanları listeye al
+        if current_page_price > 0 and found_price_val >= current_page_price:
             continue
 
-        # TR sitesi veya whitelist kontrolü
         if any(w in site for w in whitelist) or ".tr" in link.lower():
             cheap_results.append({
                 "site": item.get("source"),
@@ -62,7 +57,7 @@ def compare():
                 "price_num": found_price_val
             })
 
-    # En ucuza göre sıralama
+    # En ucuzdan pahalıya sırala
     sorted_list = sorted(cheap_results, key=lambda x: x['price_num'])
     for item in sorted_list: del item['price_num']
 
