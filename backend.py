@@ -15,7 +15,8 @@ def home():
 def clean_price(price_str):
     if not price_str: return 0.0
     try:
-        # Fiyatı sayıya çevirirken tüm noktaları kaldırıp virgülü noktaya çevirir
+        # Fiyatı sayıya çevirirken noktaları siler, virgülü noktaya çevirir
+        # Örn: "3.399,00 TL" -> 3399.00
         cleaned = str(price_str).replace('TL', '').replace(' ', '').replace('.', '')
         cleaned = cleaned.replace(',', '.')
         return float(re.sub(r'[^\d.]', '', cleaned))
@@ -25,7 +26,6 @@ def clean_price(price_str):
 def compare():
     data = request.get_json()
     full_title = data.get("title", "")
-    # Sayfadaki mevcut fiyat (Örn: 549.90)
     current_page_price = clean_price(data.get("original_price", "0"))
     
     search_query = " ".join(full_title.split()[:5]) 
@@ -41,7 +41,6 @@ def compare():
     except: return jsonify({"results": []})
 
     cheap_results = []
-    # Sadece bu güvenilir siteler ve sadece UCUZ olanlar
     whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "mediamarkt"]
 
     for item in shopping_results:
@@ -49,7 +48,7 @@ def compare():
         found_price_val = clean_price(item.get("price", "0"))
         link = item.get("link", "")
 
-        # FİLTRE: Sayfadaki fiyattan 1 kuruş bile pahalıysa listeye ekleme!
+        # KESİN FİLTRE: Senin fiyatından pahalı olan her şeyi siler
         if current_page_price > 0 and found_price_val >= current_page_price:
             continue
 
@@ -61,7 +60,7 @@ def compare():
                 "price_num": found_price_val
             })
 
-    # En ucuzdan pahalıya sırala
+    # En ucuza göre sırala
     sorted_list = sorted(cheap_results, key=lambda x: x['price_num'])
     for item in sorted_list: del item['price_num']
 
