@@ -3,10 +3,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 
-# KRİTİK: app tanımı burada olmalı (Hata almamak için)
+# Flask uygulamasını başlatıyoruz
 app = Flask(__name__)
 CORS(app)
 
+# Senin SerpApi Anahtarın
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -28,24 +29,25 @@ def clean_price(price_str):
 def compare():
     try:
         data = request.get_json()
-        # Screenshot_92'de hızlandırmak için başlığı 3 kelimeye düşürdük
         full_title = data.get("title", "")
+        # Aramayı hızlandırmak için sadece ilk 3 kelimeyi alıyoruz
         search_query = " ".join(full_title.split()[:3]) 
         current_price = clean_price(data.get("original_price", "0"))
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
-            "hl": "tr", "gl": "tr",
+            "hl": "tr",
+            "gl": "tr",
             "api_key": SERP_API_KEY
         }
 
-        # Timeout 8 saniye (Hız için)
+        # Google'dan verileri çek (Zaman aşımı 8 saniye - Hız için)
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=8)
         results = response.json().get("shopping_results", [])
         
         cheap_results = []
-        # En hızlı ve güvenilir 5 dev site
+        # En popüler ve güvenilir mağazalar
         whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa"]
 
         for item in results:
@@ -54,7 +56,6 @@ def compare():
             link = item.get("link")
 
             if any(w in source for w in whitelist) and link:
-                # Sadece daha ucuzları veya fiyat okunamazsa hepsini göster
                 if current_price == 0 or price_val < current_price:
                     cheap_results.append({
                         "site": item.get("source"),
@@ -63,7 +64,7 @@ def compare():
                         "p_val": price_val
                     })
         
-        # En ucuz en üstte
+        # En ucuzu başa getir
         sorted_results = sorted(cheap_results, key=lambda x: x['p_val'])
         for x in sorted_results: del x['p_val']
 
