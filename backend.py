@@ -11,7 +11,6 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 def format_price(price_str):
     if not price_str: return 0
     try:
-        # "123.999,00 TL" formatını sayıya çevirir
         cleaned = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(cleaned)
     except: return 0
@@ -21,48 +20,42 @@ def compare():
     try:
         data = request.get_json()
         full_title = data.get("title", "")
-        
-        # Arama sorgusunu optimize et
-        search_query = " ".join(full_title.split()[:5])
+        # Aramayı daha esnek bırakıyoruz ki 112.000 TL'lik alternatifler gelsin
+        search_query = " ".join(full_title.split()[:4])
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
             "hl": "tr", "gl": "tr",
-            "num": "30" # Daha geniş tarama yaparak 112.999 TL gibi fırsatları yakalar
+            "num": "40" # Tarama sayısını artırdık
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Yasaklı kelimeler (Yedek parça ve aksesuar engelleme)
-        forbidden = ["kılıf", "case", "cam", "film", "kapak", "yedek", "parça", "tamir", "ekran koruyucu", "lens"]
+        # Sadece kılıf ve cam gibi net aksesuarları eliyoruz
+        forbidden = ["kılıf", "case", "cam", "film", "kapak", "yedek", "parça", "tamir"]
         
-        # Güvenilir ve popüler satıcı listesi
-        whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "pttavm", "turkcell", "mediamarkt"]
-
         for item in results:
             title = item.get("title", "").lower()
-            source = item.get("source", "").lower()
             price_val = format_price(item.get("price"))
             link = item.get("link") or item.get("product_link")
 
-            # FİLTRELEME: Aksesuar değilse ve fiyatı mantıklıysa (Telefon için > 5000 TL)
+            # Fiyat 5000 TL üstündeyse gerçek üründür
             if not any(word in title for word in forbidden) and price_val > 5000:
-                if any(w in source for w in whitelist) and link:
-                    final_list.append({
-                        "site": item.get("source"),
-                        "price": item.get("price"),
-                        "link": link,
-                        "raw_price": price_val
-                    })
+                final_list.append({
+                    "site": item.get("source"),
+                    "price": item.get("price"),
+                    "link": link,
+                    "raw_price": price_val
+                })
         
-        # EN ÖNEMLİ KISIM: Fiyata göre artan sıralama (En ucuz en üstte)
+        # En ucuz olanı en başa al
         final_list.sort(key=lambda x: x['raw_price'])
 
-        return jsonify({"results": final_list[:8]}) # Kullanıcıya en iyi 8 sonucu sunar
+        return jsonify({"results": final_list[:10]}) 
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
