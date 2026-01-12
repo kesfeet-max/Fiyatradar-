@@ -10,7 +10,7 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 
 def clean_price(price_str):
     try:
-        # '35.499 TL' gibi metinleri sayıya çevirir
+        # Sayısal olmayan karakterleri temizler ve kuruş ayrımını yapar
         cleaned = re.sub(r'[^\d,]', '', str(price_str)).replace(',', '.')
         return float(cleaned)
     except: return 0.0
@@ -19,9 +19,9 @@ def clean_price(price_str):
 def compare():
     data = request.get_json()
     full_title = data.get("title", "")
-    current_price = clean_price(data.get("original_price", "0")) # Sayfadaki fiyat
+    current_price = clean_price(data.get("original_price", "0")) 
     
-    # Arama sorgusunu optimize et
+    # Arama terimini optimize eder (ilk 5 kelime)
     search_query = " ".join(full_title.split()[:5]) 
 
     params = {
@@ -37,6 +37,8 @@ def compare():
     except: return jsonify({"results": []})
 
     cheap_results = []
+    # Yasaklı yabancı siteler
+    blacklist = ["microless", "desertcart", "ubuy", "ebay", "aliexpress"]
     # Güvenilir TR siteleri
     whitelist = ["trendyol", "hepsiburada", "n11", "amazon", "vatan", "teknosa", "pazarama", "ciceksepeti", "idefix", "mediamarkt"]
 
@@ -45,12 +47,13 @@ def compare():
         found_price_val = clean_price(item.get("price", "0"))
         link = item.get("link", "")
 
-        # KRİTİK FİLTRE: Sadece sayfadaki fiyattan ucuz olanları al
-        # (Eğer ürün 35.499 ise, 35.400 ve altını gösterir)
+        if any(bad in site for bad in blacklist): continue
+
+        # SADECE UCUZ OLANLAR: Mevcut fiyattan pahalıysa listeye alma
         if current_price > 0 and found_price_val >= current_price:
             continue
 
-        # TR sitesi kontrolü
+        # TR sitesi veya whitelist kontrolü
         if any(w in site for w in whitelist) or ".tr" in link.lower():
             cheap_results.append({
                 "site": item.get("source"),
@@ -59,8 +62,11 @@ def compare():
                 "price_num": found_price_val
             })
 
-    # En ucuzu en üste koy
+    # En ucuza göre sıralama
     sorted_list = sorted(cheap_results, key=lambda x: x['price_num'])
     for item in sorted_list: del item['price_num']
 
     return jsonify({"results": sorted_list})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
