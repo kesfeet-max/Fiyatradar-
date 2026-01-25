@@ -3,11 +3,24 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
+
+def clean_google_url(url):
+    """Google sarmalını Python tarafında çözer."""
+    if not url: return ""
+    if "google.com/url?" in url or "google.com.tr/url?" in url:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        # url, adurl veya q parametrelerinden birini al
+        cleaned = params.get('url') or params.get('adurl') or params.get('q')
+        if cleaned:
+            return unquote(cleaned[0])
+    return url
 
 def parse_price(price_str):
     if not price_str: return 0
@@ -16,11 +29,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def extract_model_code(title):
-    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
-    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
-    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -28,64 +36,45 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # Arama terimi (Marka + Model)
-        words = original_title.split()
-        search_query = " ".join(words[:5])
-        model_codes = extract_model_code(original_title)
+        search_query = " ".join(original_title.split()[:5])
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60"
+            "hl": "tr", "gl": "tr"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Kesinlikle elenmesi gereken kelimeler
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
+        forbidden = {"kordon", "kayış", "kılıf", "aksesuar", "yedek"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            link = item.get("link") or item.get("product_link")
+            # Önce direct_link'i dene, yoksa normal linki al
+            raw_link = item.get("direct_link") or item.get("link")
 
-            if not link or item_price == 0: continue
+            if not raw_link or item_price == 0: continue
+            
+            # Linki temizle
+            clean_link = clean_google_url(raw_link)
 
-            # --- AKILLI DOĞRULAMA MOTORU ---
-
-            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
-            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
-            if current_price > 2000:
-                if item_price < (current_price * 0.60):
-                    continue
-            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
-                if item_price < (current_price * 0.50):
-                    continue
-
-            # 2. MODEL KODU KONTROLÜ
-            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]):
-                    continue
-
-            # 3. KATEGORİSEL KELİME FİLTRESİ
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
-                continue
+            # Filtreler (Mevcut mantığın)
+            if current_price > 500 and item_price < (current_price * 0.50): continue
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden): continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link,
+                "link": clean_link, # Artık burası tertemiz
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
-        # Fiyata göre sırala (Mağaza bazlı temizlik)
         final_list.sort(key=lambda x: x['raw_price'])
-        
         unique_results = []
         seen_sites = set()
         for res in final_list:
@@ -94,11 +83,8 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
