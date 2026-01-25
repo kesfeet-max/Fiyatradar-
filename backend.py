@@ -15,12 +15,26 @@ def parse_price(price_str):
     try:
         val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(val)
-    except:
-        return 0
+    except: return 0
 
 def extract_model_code(title):
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
+
+def get_real_url(google_url):
+    """Google'ın reklam linkini soyup gerçek ürün linkini çıkarır."""
+    try:
+        if "google.com/url?" in google_url:
+            parsed = urlparse(google_url)
+            # adurl parametresi genellikle gerçek ürün linkidir
+            actual = parse_qs(parsed.query).get('adurl', [None])[0] or \
+                     parse_qs(parsed.query).get('url', [None])[0]
+            if actual:
+                # Linkin içindeki takip kodlarını temizle (?merchantId=... gibi)
+                return unquote(actual).split('?')[0]
+    except:
+        pass
+    return google_url
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -29,15 +43,14 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        words = original_title.split()
-        search_query = " ".join(words[:5])
-        model_codes = extract_model_code(original_title)
+        # Arama terimini daha spesifik yapıyoruz
+        search_query = f"{original_title}"
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "40"
+            "hl": "tr", "gl": "tr", "num": "20"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
@@ -50,29 +63,28 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             source = item.get("source", "")
+            google_link = item.get("link", "")
             
             if item_price == 0: continue
-
-            # Filtrelerin (Dokunulmadı)
+            
+            # Senin filtrelerin
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
                 if item_price < (current_price * 0.50): continue
 
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]):
-                    continue
-
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
-            # Linki hiç göndermiyoruz, eklenti mağaza isminden kendi oluşturacak
+            # --- KRİTİK DÜZELTME ---
+            real_link = get_real_url(google_link)
+
             final_list.append({
                 "site": source,
                 "price": item.get("price"),
                 "image": item.get("thumbnail"),
                 "raw_price": item_price,
-                "product_name": item.get("title")
+                "link": real_link # Artık eklentiye 'saf' link gidiyor
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
@@ -84,7 +96,6 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
