@@ -15,24 +15,24 @@ def parse_price(price_str):
     try:
         val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(val)
-    except: return 0
+    except:
+        return 0
 
 def extract_model_code(title):
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
 def clean_url(raw_url):
-    """Google'ın karmaşık linklerini temizleyip gerçek mağaza linkini çıkarır."""
     if not raw_url: return ""
     if "google.com/url?" in raw_url:
         try:
             parsed = urlparse(raw_url)
-            # url veya adurl parametresini çek
             actual = parse_qs(parsed.query).get('url', [None])[0] or \
                      parse_qs(parsed.query).get('adurl', [None])[0]
             if actual:
                 return unquote(actual)
-        except: pass
+        except:
+            pass
     return raw_url
 
 @app.route("/compare", methods=["POST"])
@@ -67,7 +67,6 @@ def compare():
             
             if item_price == 0: continue
 
-            # --- SENİN FİLTRELERİN (KORUNDU) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -80,7 +79,6 @@ def compare():
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
-            # Linki Python tarafında temizleyip eklentiye öyle gönderiyoruz
             safe_link = clean_url(raw_link)
 
             final_list.append({
@@ -88,7 +86,7 @@ def compare():
                 "price": item.get("price"),
                 "image": item.get("thumbnail"),
                 "raw_price": item_price,
-                "link": safe_link, # Temizlenmiş link
+                "link": safe_link,
                 "product_name": item.get("title") 
             })
         
@@ -103,3 +101,9 @@ def compare():
         return jsonify({"results": unique_results[:10]})
         
     except Exception as e:
+        # Buradaki hata düzeltildi, artık boş değil
+        print(f"Hata detayı: {str(e)}")
+        return jsonify({"results": [], "error": str(e)})
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
