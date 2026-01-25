@@ -49,18 +49,25 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- GELİŞMİŞ LİNK TEMİZLEME MOTORU ---
-            link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
+            # --- KRİTİK LİNK TEMİZLEME KATMANI ---
+            raw_link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
             
-            # Eğer link Google Shopping iç sayfasıysa veya Redirect içeriyorsa temizle
-            if "google.com" in link or "googleusercontent.com" in link:
-                match = re.search(r'(?:url|q|adurl|pURL)=([^&]+)', link)
-                if match:
-                    link = unquote(match.group(1))
+            # Linkin içindeki gerçek URL'yi ayıkla
+            if "google.com" in raw_link or "googleusercontent.com" in raw_link:
+                # 'q=' veya 'url=' sonrasındaki her şeyi al
+                extracted = re.search(r'(?:url|q|adurl)=([^&]+)', raw_link)
+                if extracted:
+                    raw_link = unquote(extracted.group(1))
             
-            if not link or item_price == 0: continue
+            # Eğer hala içinde google varsa, linkin içindeki ilk 'http'yi bul ve oradan kes
+            if "google.com/url?" in raw_link:
+                start_index = raw_link.find("http", 4) # 4. karakterden sonraki http'yi bul
+                if start_index != -1:
+                    raw_link = raw_link[start_index:]
 
-            # --- SENİN FİLTRELEME MANTIĞIN (DOKUNULMADI) ---
+            if not raw_link or item_price == 0: continue
+
+            # --- ESKİ ÇALIŞAN FİLTRELERİN (DOKUNULMADI) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -76,7 +83,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link,
+                "link": raw_link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
@@ -96,5 +103,4 @@ def compare():
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
