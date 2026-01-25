@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -19,6 +20,20 @@ def parse_price(price_str):
 def extract_model_code(title):
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
+
+def clean_url(raw_url):
+    """Google'ın karmaşık linklerini temizleyip gerçek mağaza linkini çıkarır."""
+    if not raw_url: return ""
+    if "google.com/url?" in raw_url:
+        try:
+            parsed = urlparse(raw_url)
+            # url veya adurl parametresini çek
+            actual = parse_qs(parsed.query).get('url', [None])[0] or \
+                     parse_qs(parsed.query).get('adurl', [None])[0]
+            if actual:
+                return unquote(actual)
+        except: pass
+    return raw_url
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -48,10 +63,11 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             source = item.get("source", "")
+            raw_link = item.get("link", "")
             
             if item_price == 0: continue
 
-            # --- SENİN FİLTRELERİN (DOKUNULMADI) ---
+            # --- SENİN FİLTRELERİN (KORUNDU) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -64,13 +80,16 @@ def compare():
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
-            # BURADA KRİTİK DEĞİŞİKLİK: Google linkini göndermiyoruz!
+            # Linki Python tarafında temizleyip eklentiye öyle gönderiyoruz
+            safe_link = clean_url(raw_link)
+
             final_list.append({
                 "site": source,
                 "price": item.get("price"),
                 "image": item.get("thumbnail"),
                 "raw_price": item_price,
-                "product_name": item.get("title") # Mağaza içinde aratmak için
+                "link": safe_link, # Temizlenmiş link
+                "product_name": item.get("title") 
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
@@ -84,7 +103,3 @@ def compare():
         return jsonify({"results": unique_results[:10]})
         
     except Exception as e:
-        return jsonify({"results": [], "error": str(e)})
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
