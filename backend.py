@@ -16,15 +16,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def get_match_score(original, target):
-    """İki başlık arasındaki benzerliği puanlar (0-100)"""
-    original_words = set(re.findall(r'\w+', original.lower()))
-    target_words = set(re.findall(r'\w+', target.lower()))
-    
-    if not original_words: return 0
-    common = original_words.intersection(target_words)
-    return (len(common) / len(original_words)) * 100
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -32,20 +23,23 @@ def compare():
         original_title = data.get("title", "")
         current_price = parse_price(data.get("price", "0"))
         
-        # ARAMA: En doğru sonuç için ilk 4-5 kelimeyi tırnak içinde göndererek Google'ı zorluyoruz
-        brand_model = " ".join(original_title.split()[:5])
+        # 1. ARAMA STRATEJİSİ: Daha fazla sonuç çekelim (40 -> 60)
+        # Sadece Marka + Model alarak n11/Hepsiburada'daki tüm varyasyonları yakala
+        clean_title = " ".join(original_title.split()[:6])
         
         params = {
             "engine": "google_shopping",
-            "q": brand_model,
+            "q": clean_title,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "40"
+            "hl": "tr", "gl": "tr", "num": "60" 
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
+        forbidden = ["yedek parça", "aparat", "aksesuar", "kordon", "kılıf", "ikinci el"]
+
         for item in results:
             item_title = item.get("title", "")
             item_price = parse_price(item.get("price"))
@@ -53,41 +47,41 @@ def compare():
 
             if not actual_link or item_price == 0: continue
 
-            # --- MİLYONLARCA ÜRÜN İÇİN GENEL MANTIK ---
+            # 2. AKILLI EŞİK (200 TL HATASINI ÇÖZEN KISIM)
+            # Eğer fiyat farkı %15'ten az ise (Örn: 8000 TL vs 7800 TL) HİÇ SORGULAMA, GÖSTER.
+            # Çünkü bu gerçek bir rekabet fiyatıdır.
+            diff_ratio = abs(item_price - current_price) / current_price if current_price > 0 else 0
             
-            # 1. Benzerlik Puanı: Başlıkların en az %50'si örtüşmeli
-            score = get_match_score(original_title, item_title)
-            if score < 50: continue
-
-            # 2. Fiyat Uçurumu (En Önemli Kriter):
-            # Milyonlarca üründe değişmeyen kural: Bir ürünün asıl fiyatı ile 
-            # "aksesuar/yedek parça" fiyatı arasında uçurum vardır.
-            # %50'den daha ucuz olan ürün "BAŞKA BİR ŞEYDİR" (istisnalar hariç).
-            if current_price > 500: # Ucuz ürünlerde esnek, pahalıda katı
-                price_ratio = item_price / current_price
-                if price_ratio < 0.50 or price_ratio > 2.0:
-                    continue
+            is_valid = False
+            if diff_ratio < 0.15: 
+                is_valid = True # Küçük farklar her zaman geçerli
+            elif diff_ratio < 0.45:
+                # Orta farklarda (Örn: 8000 TL vs 5000 TL) kelime kontrolü yap
+                match_count = sum(1 for word in clean_title.split() if word.lower() in item_title.lower())
+                if match_count >= 2:
+                    is_valid = True
             
-            # 3. Spesifik Kelime Kontrolü (Hafıza, Set vb.)
-            # Aranan üründe rakamsal bir değer (256GB, 2TB, 3'lü) varsa, sonuçta da olmalı.
-            original_specs = re.findall(r'\d+\s*[gt]b|\d+[\s\-\']?li|\d+[\s\-\']?lü', original_title.lower())
-            if original_specs:
-                if not any(spec in item_title.lower() for spec in original_specs):
-                    continue
+            # 3. YASAKLI KELİME (Sadece bariz hataları ele)
+            if any(f in item_title.lower() for f in forbidden) and not any(f in original_title.lower() for f in forbidden):
+                is_valid = False
 
-            final_list.append({
-                "site": item.get("source"),
-                "price": item.get("price"),
-                "link": actual_link,
-                "image": item.get("thumbnail"),
-                "raw_price": item_price,
-                "score": score
-            })
+            if is_valid:
+                final_list.append({
+                    "site": item.get("source"),
+                    "price": item.get("price"),
+                    "link": actual_link,
+                    "image": item.get("thumbnail"),
+                    "raw_price": item_price
+                })
         
-        # Hem puana hem fiyata göre akıllı sıralama
-        final_list.sort(key=lambda x: (-x['score'], x['raw_price']))
+        # 4. AYNI SİTEYİ TEKRAR GÖSTERME (Trendyol'dayken Trendyol'u gösterme)
+        current_url = data.get("url", "")
+        filtered_list = [i for i in final_list if i['site'].lower() not in current_url.lower()]
+
+        # Fiyata göre sırala
+        filtered_list.sort(key=lambda x: x['raw_price'])
         
-        return jsonify({"results": final_list[:8]})
+        return jsonify({"results": filtered_list[:10]})
         
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
