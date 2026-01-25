@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import unquote # Link temizleme için gerekli
+from urllib.parse import unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -18,7 +18,6 @@ def parse_price(price_str):
     except: return 0
 
 def extract_model_code(title):
-    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
@@ -50,19 +49,18 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- GOOGLE ENGELİNDEN KURTARMA KODU (BAŞLANGIÇ) ---
-            # Google'ın verdiği 'direct_link' varsa onu al, yoksa normal linki al ve içini temizle
-            link = item.get("direct_link") or item.get("link") or item.get("product_link")
+            # --- GELİŞMİŞ LİNK TEMİZLEME MOTORU ---
+            link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
             
-            if link and "google.com/url?" in link:
-                # Linkin içindeki gerçek site adresini (q= veya url= sonrasını) cımbızla çeker
-                match = re.search(r'(?:url|q|adurl)=([^&]+)', link)
+            # Eğer link Google Shopping iç sayfasıysa veya Redirect içeriyorsa temizle
+            if "google.com" in link or "googleusercontent.com" in link:
+                match = re.search(r'(?:url|q|adurl|pURL)=([^&]+)', link)
                 if match:
                     link = unquote(match.group(1))
-            # --- GOOGLE ENGELİNDEN KURTARMA KODU (BİTİŞ) ---
-
+            
             if not link or item_price == 0: continue
 
+            # --- SENİN FİLTRELEME MANTIĞIN (DOKUNULMADI) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -78,7 +76,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link, # Artık temizlenmiş link gidiyor
+                "link": link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
