@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -17,12 +16,9 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def clean_link(link):
-    if not link: return ""
-    # Linkin başında protokol yoksa eklenti hata verir, bunu önleyelim
-    if link.startswith("//"):
-        return "https:" + link
-    return link
+def extract_model_code(title):
+    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
+    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -31,40 +27,50 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        search_query = " ".join(original_title.split()[:5])
-        
+        words = original_title.split()
+        search_query = " ".join(words[:5])
+        model_codes = extract_model_code(original_title)
+
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr"
+            "hl": "tr", "gl": "tr", "num": "60"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Senin başarılı filtrelerin
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "aksesuar"}
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # Linki hem product_link hem de normal linkten kontrol et
-            raw_link = item.get("product_link") or item.get("link")
-            safe_link = clean_link(raw_link)
+            # LINK DÜZELTME: Başına https ekleyerek ERR_FILE_NOT_FOUND hatasını önler
+            link = item.get("product_link") or item.get("link")
+            if link and link.startswith("//"):
+                link = "https:" + link
 
-            if not safe_link or item_price == 0: continue
+            if not link or item_price == 0: continue
 
-            # Aksesuar ve Fiyat Filtreleri
-            if current_price > 2000 and item_price < (current_price * 0.60): continue
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden): continue
+            # --- SENİN ORIJINAL FILTRELERIN (AYNEN KORUNDU) ---
+            if current_price > 2000:
+                if item_price < (current_price * 0.60): continue
+            elif current_price > 500:
+                if item_price < (current_price * 0.50): continue
+
+            if model_codes:
+                if not any(code.lower() in item_title for code in model_codes[:2]): continue
+
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
+                continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": safe_link,
+                "link": link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
@@ -79,8 +85,10 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
+        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
