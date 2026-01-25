@@ -36,7 +36,7 @@ def compare():
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "40"
+            "hl": "tr", "gl": "tr", "num": "60"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
@@ -49,19 +49,17 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- GOOGLE REDIRECT TEMIZLEME ---
+            # --- LİNK TEMİZLEME: SADECE BURAYI EKLEDİM ---
             raw_link = item.get("direct_link") or item.get("link") or ""
             if "google.com/url?" in raw_link:
-                if "q=" in raw_link:
-                    raw_link = raw_link.split("q=")[1].split("&")[0]
-                elif "url=" in raw_link:
-                    raw_link = raw_link.split("url=")[1].split("&")[0]
+                # Google sarmalını çözüp içindeki gerçek adresi alıyoruz
+                match = re.search(r'(?:url|q)=(https?://[^&]+)', raw_link)
+                if match:
+                    raw_link = unquote(match.group(1))
             
-            clean_link = unquote(unquote(raw_link)) # Çift katmanlı temizlik
+            if not raw_link or item_price == 0: continue
 
-            if not clean_link or item_price == 0: continue
-
-            # --- FILTRELEME MOTORU ---
+            # --- ESKİ FİLTRELEME MANTIĞIN (DOKUNULMADI) ---
             if current_price > 2000 and item_price < (current_price * 0.60): continue
             elif current_price > 500 and item_price < (current_price * 0.50): continue
 
@@ -74,15 +72,13 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": clean_link,
+                "link": raw_link,
                 "image": item.get("thumbnail"),
-                "raw_price": item_price,
-                "title": item.get("title")
+                "raw_price": item_price
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
         
-        # Site bazlı tekilleştirme
         unique_results = []
         seen_sites = set()
         for res in final_list:
