@@ -16,10 +16,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-@app.route("/", methods=["GET"])
-def home():
-    return "FiyatBul API Calisiyor!", 200
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -27,10 +23,12 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # BİREBİR EŞLEŞME İÇİN: İlk 3 kelimeyi "anahtar" kabul ediyoruz
-        # Örn: "Kumtel Fastfryer XL"
-        required_keywords = original_title.split()[:3]
-        search_query = " ".join(required_keywords)
+        # 1. ANALİZ: Ürün bir "SET" mi?
+        is_set = any(word in original_title for word in ["set", "takım", "3'lü", "komple"])
+        
+        # Arama sorgusunu daralt (Marka + Model + Kritik Kelime)
+        search_words = original_title.split()[:4]
+        search_query = " ".join(search_words)
 
         params = {
             "engine": "google_shopping",
@@ -43,35 +41,44 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Çok daha katı yasaklı listesi
-        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "kılıf", "cam", "ikinci el", "dvd", "kitap", "aparati", "uclari"]
+        # Çok daha katı yasaklı listesi (Aksesuar koruması)
+        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "filtre", "kitap", "dvd", "ikinci el"]
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # 1. KURAL: BAŞLIKTA ANA KELİMELERİN TAMAMI GEÇMELİ (Birebir Uyum)
-            if not all(word.lower() in item_title for word in required_keywords):
+            # --- KRİTİK FİLTRELEME MANTIKLARI ---
+
+            # A) SET KONTROLÜ (Screenshot_24 Çözümü):
+            # Eğer asıl ürün SET ise ve bulunan üründe "set" kelimesi geçmiyorsa, bu parçadır. ELE!
+            if is_set and not any(word in item_title for word in ["set", "takım", "3'lü"]):
                 continue
 
-            # 2. KURAL: FİYAT KONTROLÜ (%35'ten fazla ucuz olamaz - yedek parça koruması)
-            if current_price > 0 and item_price < (current_price * 0.65):
-                continue
+            # B) FİYAT SAPMASI (Hayati Önem):
+            # Gerçek ürünün fiyatından %40'tan fazla sapma varsa o ürün "başka bir şeydir".
+            # 17.000 TL'lik set yerine 8.000 TL'lik sonuç gelirse otomatik elenir.
+            if current_price > 0:
+                deviation = abs(item_price - current_price) / current_price
+                if deviation > 0.40: # %40'tan fazla fark varsa (çok ucuz veya çok pahalı)
+                    continue
 
-            # 3. KURAL: YASAKLI KELİME KONTROLÜ
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
+            # C) BAŞLIK EŞLEŞME PUANI:
+            # Aranan kelimelerin en az %70'i başlıkta geçmeli.
+            match_count = sum(1 for word in search_words if word.lower() in item_title)
+            if match_count < len(search_words) * 0.7:
                 continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
                 "link": item.get("link") or item.get("product_link"),
-                "image": item.get("thumbnail"), # GÖRSEL BURADA
+                "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
-        return jsonify({"results": final_list[:8]})
+        return jsonify({"results": final_list[:6]})
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
