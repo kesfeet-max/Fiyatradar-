@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -15,6 +16,29 @@ def parse_price(price_str):
         val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(val)
     except: return 0
+
+def clean_direct_link(google_link):
+    """Google'ın yönlendirme linkinden asıl mağaza linkini çıkarır."""
+    if not google_link:
+        return ""
+    
+    # Eğer link zaten bir mağaza linkiyse dokunma
+    if "google.com" not in google_link:
+        return google_link
+        
+    try:
+        parsed_url = urlparse(google_link)
+        params = parse_qs(parsed_url.query)
+        
+        # Google Shopping linklerinde asıl hedef genellikle 'adurl' veya 'url' parametresindedir
+        actual_url = params.get('adurl') or params.get('url')
+        
+        if actual_url:
+            return unquote(actual_url[0])
+    except:
+        pass
+    
+    return google_link
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -37,30 +61,33 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap"}
+
         for item in results:
-            # --- KRİTİK LİNK DÜZELTMESİ ---
-            # Google Shopping ara sayfasını atlayıp direkt mağazaya gitmek için:
-            # Varsa 'product_link' (direkt link), yoksa 'link' kullan.
-            actual_link = item.get("product_link") or item.get("link")
-            
-            if not actual_link: continue
-            
+            item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # Fiyat Filtresi (Önceki başarılı mantığımız)
-            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            # 1. ADIM: Linki Temizle (Google katmanını soy)
+            raw_link = item.get("product_link") or item.get("link")
+            direct_link = clean_direct_link(raw_link)
             
+            if not direct_link: continue
+
+            # 2. ADIM: Başarılı olan Fiyat/Aksesuar Filtremiz (Bunu bozmadım)
+            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
+                continue
+
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": actual_link, # Artık daha temiz link gidiyor
+                "link": direct_link, # Artık temiz ve direkt link
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
         
-        # Site tekilleştirme
         unique_results = []
         seen_sites = set()
         for res in final_list:
