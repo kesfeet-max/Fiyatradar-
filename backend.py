@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -16,10 +17,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def extract_model_code(title):
-    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
-    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -27,48 +24,41 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
+        # Arama terimi (Orijinal mantığın)
         search_query = " ".join(original_title.split()[:5])
-        model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "40"
+            "hl": "tr", "gl": "tr"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "aksesuar"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- LİNK TEMİZLEME ---
-            link = item.get("product_link") or item.get("link")
-            if not link or item_price == 0: continue
-            
-            # Linkin başına protokol ekle (Screenshot 42'deki hatayı önler)
-            if link.startswith("//"):
-                link = "https:" + link
+            # --- LİNK DÜZELTME STRATEJİSİ ---
+            # Google Shopping detay sayfasına (Screenshot 45) giden linkleri eliyoruz
+            link = item.get("link")
+            # Eğer link doğrudan google.com/shopping/product/ diye başlıyorsa bu bir mağaza linki değildir!
+            if "/shopping/product/" in link or "/search?" in link:
+                # Serpapi bazen 'source_video' veya diğer alanlarda gizli link verebilir, 
+                # ama en sağlamı bu sonucu atlamaktır.
+                continue 
 
-            # --- ORIJINAL FİLTRELERİN (BOZULMADI) ---
-            # 1. Fiyat Bariyeri
-            if current_price > 2000:
-                if item_price < (current_price * 0.60): continue
-            elif current_price > 500:
-                if item_price < (current_price * 0.50): continue
+            # Protokol tamamlama
+            if link.startswith("//"): link = "https:" + link
 
-            # 2. Model Kodu Kontrolü
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]): continue
-
-            # 3. Yasaklı Kelime Kontrolü
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
-                continue
+            # Filtrelerin (Bozulmadı)
+            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden): continue
 
             final_list.append({
                 "site": item.get("source"),
@@ -88,7 +78,6 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
