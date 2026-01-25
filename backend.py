@@ -9,58 +9,63 @@ CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
-def extract_specifications(text):
-    """Başlıktan GB, TB, Pro, Max gibi kritik özellikleri ayıklar."""
-    specs = []
-    # GB veya TB değerlerini yakala (Örn: 128GB, 256 gb, 2TB)
-    capacity = re.findall(r'(\d+\s*[gt]b)', text.lower())
-    if capacity:
-        specs.extend(capacity)
-    
-    # Model spesifik kelimeleri yakala
-    models = ["pro max", "pro", "plus", "ultra"]
-    for m in models:
-        if m in text.lower():
-            specs.append(m)
-            break # Pro Max varsa Pro'yu ayrıca ekleme
-    return specs
+def parse_price(price_str):
+    if not price_str: return 0
+    try:
+        val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
+        return int(val)
+    except: return 0
+
+def extract_must_have(text):
+    """Hafıza ve Kritik model kelimelerini ayıklar."""
+    # GB, TB, Pro, Max, Ultra gibi kelimeleri bul
+    must_have = re.findall(r'(\d+\s*[gt]b|pro\s*max|ultra|plus)', text.lower())
+    return must_have
 
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
         data = request.get_json()
         original_title = data.get("title", "").lower()
-        current_price = int(re.sub(r'[^\d]', '', data.get("price", "0").split(',')[0]))
+        current_price = parse_price(data.get("price", "0"))
         
-        # --- KRİTİK: Teknik Özellikleri Kilitle ---
-        required_specs = extract_specifications(original_title)
+        # 1. ANALİZ: Kritik kelimeler (2TB, Pro Max vb.)
+        required_words = extract_must_have(original_title)
         
+        # Arama sorgusunu biraz daha genişletelim (Google daha çok sonuç getirsin)
+        search_query = " ".join(original_title.split()[:6])
+
         params = {
             "engine": "google_shopping",
-            "q": original_title, # Sorguyu olduğu gibi gönderiyoruz
+            "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "30"
+            "hl": "tr", "gl": "tr", "num": "35"
         }
 
-        response = requests.get("https://serpapi.com/search.json", params=params)
-        results = response.json().get("shopping_results", [])
+        results = requests.get("https://serpapi.com/search.json", params=params).json().get("shopping_results", [])
         
         final_list = []
+        forbidden = ["kordon", "kutu", "yedek", "parça", "ikinci el", "kılıf"]
+
         for item in results:
             item_title = item.get("title", "").lower()
-            item_price = int(re.sub(r'[^\d]', '', item.get("price", "0").split(',')[0]))
+            item_price = parse_price(item.get("price"))
 
-            # 1. KURAL: TEKNİK ÖZELLİK KONTROLÜ (2TB varsa 2TB olmalı!)
-            # Eğer orijinalde "2tb" varsa ama sonuçta yoksa, o ürün çöptür.
-            if not all(spec in item_title for spec in required_specs):
+            # --- SÜPER FİLTRE ---
+            
+            # A) KRİTİK KELİME KONTROLÜ (Hafıza tutmuyorsa asla gösterme!)
+            if not all(word in item_title for word in required_words):
                 continue
 
-            # 2. KURAL: FİYAT BANDI (Aşırı sapanları ele)
-            # iPhone'da %20'den fazla ucuz olması imkansızdır (başka modeldir).
+            # B) FİYAT SAPMA KONTROLÜ (Saatteki gibi sonuç gelmeme sorunu için %50'ye esnetelim)
             if current_price > 0:
                 deviation = abs(item_price - current_price) / current_price
-                if deviation > 0.25: # iPhone'lar için daha dar bir limit (%25)
+                if deviation > 0.50: # %50 fark varsa ele (Hala güvenli ama daha esnek)
                     continue
+
+            # C) YASAKLI KELİME
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
+                continue
 
             final_list.append({
                 "site": item.get("source"),
@@ -70,7 +75,6 @@ def compare():
                 "raw_price": item_price
             })
         
-        # En ucuz gerçek sonuçları getir
         final_list.sort(key=lambda x: x['raw_price'])
         return jsonify({"results": final_list[:8]})
     except Exception as e:
