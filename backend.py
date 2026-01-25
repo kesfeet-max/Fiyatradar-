@@ -17,10 +17,10 @@ def parse_price(price_str):
     except: return 0
 
 def get_keywords(text):
-    """Metni en önemli 3-4 anahtar kelimeye indirger."""
+    """Metinden marka, model ve önemli teknik terimleri ayıklar."""
     clean = re.sub(r'[^\w\s]', '', text.lower())
     words = clean.split()
-    # İlk 4 kelime genellikle Marka + Model'dir ve en önemli kısımdır.
+    # İlk 5 kelime genelde en belirleyici olandır
     return words[:5]
 
 @app.route("/compare", methods=["POST"])
@@ -30,7 +30,6 @@ def compare():
         original_title = data.get("title", "")
         current_price = parse_price(data.get("price", "0"))
         
-        # ANAHTAR KELİME TABANLI ARAMA
         keywords = get_keywords(original_title)
         search_query = " ".join(keywords)
 
@@ -38,15 +37,18 @@ def compare():
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60" # Daha geniş tarama (60 sonuç)
+            "hl": "tr", "gl": "tr", "num": "60"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_results = []
-        # Parça/Aksesuar/Kitap engelleyiciler
-        trash_words = {"kitap", "kılıf", "koruyucu", "yedek", "parça", "aparat", "aksesuar", "ikinci", "kordon", "teli"}
+        # Saat ve elektronik için tehlikeli 'aksesuar' kelimeleri
+        trash_words = {
+            "kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", 
+            "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı"
+        }
 
         for item in results:
             item_title = item.get("title", "").lower()
@@ -55,20 +57,23 @@ def compare():
 
             if not link or item_price == 0: continue
 
-            # 1. PUANLAMA: Orijinal anahtar kelimelerin kaçı başlıkta geçiyor?
+            # 1. ANALİZ: Kelime Eşleşme Puanı
             matches = sum(1 for k in keywords if k in item_title)
             match_score = matches / len(keywords) if keywords else 0
 
             # 2. KRİTİK FİLTRELER
-            # A) Eğer anahtar kelimelerin yarısı bile yoksa bu ürün yanlıştır.
-            if match_score < 0.50: continue
+            # A) Kelime Uyumu (Yarıdan fazlası tutmalı)
+            if match_score < 0.55: continue
 
-            # B) Fiyat Koruması (Uçurum Koruma): 
-            # 5000 TL'lik üründe 100 TL'lik kitapları eler, ama 4290 TL'lik n11'i elimez.
-            if current_price > 1000:
-                if item_price < (current_price * 0.40): continue
+            # B) FİYAT DUVARI (Saat kordonu engelleyici)
+            # Eğer ürün 500 TL üzerindeyse, bakılan fiyattan %50 ucuz olamaz.
+            # (10.000 TL saate 5.000 TL altı ürün gelemez)
+            if current_price > 500:
+                if item_price < (current_price * 0.50):
+                    continue
 
-            # C) Manuel Engelleme: Başlıkta çöp kelime varsa ve orijinalde yoksa ele.
+            # C) ÇÖP KELİME KONTROLÜ
+            # Orijinal başlıkta 'kordon' yoksa ama sonuçta varsa ele.
             if any(tw in item_title for tw in trash_words) and not any(tw in original_title.lower() for tw in trash_words):
                 continue
 
@@ -81,10 +86,18 @@ def compare():
                 "score": match_score
             })
         
-        # SIRALAMA: Önce en yüksek eşleşme puanı, sonra en düşük fiyat
+        # Puan (Doğruluk) öncelikli, sonra en ucuz fiyat sıralaması
         final_results.sort(key=lambda x: (-x['score'], x['raw_price']))
         
-        return jsonify({"results": final_results[:10]})
+        # Site tekrarlarını temizle (Aynı fiyata 5 tane Hepsiburada gelmesin)
+        seen_sites = set()
+        unique_results = []
+        for res in final_results:
+            if res['site'] not in seen_sites:
+                unique_results.append(res)
+                seen_sites.add(res['site'])
+
+        return jsonify({"results": unique_results[:10]})
         
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
