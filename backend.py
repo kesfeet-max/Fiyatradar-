@@ -16,11 +16,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def extract_model_code(title):
-    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
-    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
-    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -28,10 +23,8 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # Arama terimi (Marka + Model)
         words = original_title.split()
         search_query = " ".join(words[:5])
-        model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
@@ -44,48 +37,30 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Kesinlikle elenmesi gereken kelimeler
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
-
         for item in results:
-            item_title = item.get("title", "").lower()
+            # --- KRİTİK LİNK DÜZELTMESİ ---
+            # Google Shopping ara sayfasını atlayıp direkt mağazaya gitmek için:
+            # Varsa 'product_link' (direkt link), yoksa 'link' kullan.
+            actual_link = item.get("product_link") or item.get("link")
+            
+            if not actual_link: continue
+            
             item_price = parse_price(item.get("price"))
-            link = item.get("link") or item.get("product_link")
-
-            if not link or item_price == 0: continue
-
-            # --- AKILLI DOĞRULAMA MOTORU ---
-
-            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
-            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
-            if current_price > 2000:
-                if item_price < (current_price * 0.60):
-                    continue
-            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
-                if item_price < (current_price * 0.50):
-                    continue
-
-            # 2. MODEL KODU KONTROLÜ
-            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]):
-                    continue
-
-            # 3. KATEGORİSEL KELİME FİLTRESİ
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
-                continue
-
+            
+            # Fiyat Filtresi (Önceki başarılı mantığımız)
+            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link,
+                "link": actual_link, # Artık daha temiz link gidiyor
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
-        # Fiyata göre sırala (Mağaza bazlı temizlik)
         final_list.sort(key=lambda x: x['raw_price'])
         
+        # Site tekilleştirme
         unique_results = []
         seen_sites = set()
         for res in final_list:
