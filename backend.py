@@ -17,6 +17,7 @@ def parse_price(price_str):
     except: return 0
 
 def extract_model_code(title):
+    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
@@ -27,6 +28,7 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
+        # Arama terimi (Marka + Model)
         words = original_title.split()
         search_query = " ".join(words[:5])
         model_codes = extract_model_code(original_title)
@@ -42,6 +44,7 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
+        # Kesinlikle elenmesi gereken kelimeler
         forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
 
         for item in results:
@@ -50,19 +53,25 @@ def compare():
             link = item.get("link") or item.get("product_link")
 
             if not link or item_price == 0: continue
-            
-            # --- DÜZENLENEN KISIM: GOOGLE ARAMA SAYFASI LİNKLERİNİ ELE ---
-            if "google.com/search" in link or "/shopping/product/" in link:
-                continue
 
+            # --- AKILLI DOĞRULAMA MOTORU ---
+
+            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
+            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
             if current_price > 2000:
-                if item_price < (current_price * 0.60): continue
-            elif current_price > 500:
-                if item_price < (current_price * 0.50): continue
+                if item_price < (current_price * 0.60):
+                    continue
+            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
+                if item_price < (current_price * 0.50):
+                    continue
 
+            # 2. MODEL KODU KONTROLÜ
+            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
             if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]): continue
+                if not any(code.lower() in item_title for code in model_codes[:2]):
+                    continue
 
+            # 3. KATEGORİSEL KELİME FİLTRESİ
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
@@ -74,6 +83,7 @@ def compare():
                 "raw_price": item_price
             })
         
+        # Fiyata göre sırala (Mağaza bazlı temizlik)
         final_list.sort(key=lambda x: x['raw_price'])
         
         unique_results = []
@@ -89,4 +99,6 @@ def compare():
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
