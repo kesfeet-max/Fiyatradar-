@@ -27,31 +27,38 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # Arama sorgusunu daraltıyoruz
-        search_query = " ".join(original_title.split()[:5])
+        # BİREBİR EŞLEŞME İÇİN: İlk 3 kelimeyi "anahtar" kabul ediyoruz
+        # Örn: "Kumtel Fastfryer XL"
+        required_keywords = original_title.split()[:3]
+        search_query = " ".join(required_keywords)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "30"
+            "hl": "tr", "gl": "tr", "num": "40"
         }
 
-        results = requests.get("https://serpapi.com/search.json", params=params).json().get("shopping_results", [])
+        response = requests.get("https://serpapi.com/search.json", params=params)
+        results = response.json().get("shopping_results", [])
         
         final_list = []
-        # AKSESUAR VE YEDEK PARÇA FİLTRESİ
-        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "kılıf", "cam", "ikinci el", "dvd", "kitap"]
+        # Çok daha katı yasaklı listesi
+        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "kılıf", "cam", "ikinci el", "dvd", "kitap", "aparati", "uclari"]
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # 1. Filtre: Fiyat aşırı düşükse (ana ürünün %60'ından azsa) kesin yedek parçadır, ELE.
-            if current_price > 0 and item_price < (current_price * 0.6):
+            # 1. KURAL: BAŞLIKTA ANA KELİMELERİN TAMAMI GEÇMELİ (Birebir Uyum)
+            if not all(word.lower() in item_title for word in required_keywords):
                 continue
 
-            # 2. Filtre: Yasaklı kelime kontrolü
+            # 2. KURAL: FİYAT KONTROLÜ (%35'ten fazla ucuz olamaz - yedek parça koruması)
+            if current_price > 0 and item_price < (current_price * 0.65):
+                continue
+
+            # 3. KURAL: YASAKLI KELİME KONTROLÜ
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
@@ -59,6 +66,7 @@ def compare():
                 "site": item.get("source"),
                 "price": item.get("price"),
                 "link": item.get("link") or item.get("product_link"),
+                "image": item.get("thumbnail"), # GÖRSEL BURADA
                 "raw_price": item_price
             })
         
