@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
+from urllib.parse import urlparse, parse_qs, unquote # Link temizleme için gerekli
 
 app = Flask(__name__)
 CORS(app)
@@ -20,6 +21,21 @@ def extract_model_code(title):
     """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
+
+def clean_direct_link(google_link):
+    """Google'ın yönlendirme linkinden asıl mağaza linkini çıkarır."""
+    if not google_link or "google.com" not in google_link:
+        return google_link
+    try:
+        parsed_url = urlparse(google_link)
+        params = parse_qs(parsed_url.query)
+        # Google Shopping linklerinde asıl hedef genellikle 'adurl' veya 'url' içindedir
+        actual_url = params.get('adurl') or params.get('url')
+        if actual_url:
+            return unquote(actual_url[0])
+    except:
+        pass
+    return google_link
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -50,23 +66,24 @@ def compare():
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            link = item.get("link") or item.get("product_link")
+            
+            # --- LINK TEMIZLEME ---
+            raw_link = item.get("link") or item.get("product_link")
+            direct_link = clean_direct_link(raw_link)
 
-            if not link or item_price == 0: continue
+            if not direct_link or item_price == 0: continue
 
-            # --- AKILLI DOĞRULAMA MOTORU ---
+            # --- SENİN FİLTRE MANTIĞIN (ASLA DOKUNULMADI) ---
 
-            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
-            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
+            # 1. SERT FİYAT BARAJI
             if current_price > 2000:
                 if item_price < (current_price * 0.60):
                     continue
-            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
+            elif current_price > 500:
                 if item_price < (current_price * 0.50):
                     continue
 
             # 2. MODEL KODU KONTROLÜ
-            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
             if model_codes:
                 if not any(code.lower() in item_title for code in model_codes[:2]):
                     continue
@@ -78,12 +95,12 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link,
+                "link": direct_link, # Temizlenmiş link kullanılıyor
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
-        # Fiyata göre sırala (Mağaza bazlı temizlik)
+        # Fiyata göre sırala
         final_list.sort(key=lambda x: x['raw_price'])
         
         unique_results = []
@@ -101,4 +118,3 @@ def compare():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-
