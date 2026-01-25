@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -17,28 +16,10 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def clean_direct_link(google_link):
-    """Google'ın yönlendirme linkinden asıl mağaza linkini çıkarır."""
-    if not google_link:
-        return ""
-    
-    # Eğer link zaten bir mağaza linkiyse dokunma
-    if "google.com" not in google_link:
-        return google_link
-        
-    try:
-        parsed_url = urlparse(google_link)
-        params = parse_qs(parsed_url.query)
-        
-        # Google Shopping linklerinde asıl hedef genellikle 'adurl' veya 'url' parametresindedir
-        actual_url = params.get('adurl') or params.get('url')
-        
-        if actual_url:
-            return unquote(actual_url[0])
-    except:
-        pass
-    
-    return google_link
+def extract_model_code(title):
+    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
+    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
+    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -47,8 +28,10 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
+        # Arama terimi (Marka + Model)
         words = original_title.split()
         search_query = " ".join(words[:5])
+        model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
@@ -61,31 +44,46 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap"}
+        # Kesinlikle elenmesi gereken kelimeler
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            
-            # 1. ADIM: Linki Temizle (Google katmanını soy)
-            raw_link = item.get("product_link") or item.get("link")
-            direct_link = clean_direct_link(raw_link)
-            
-            if not direct_link: continue
+            link = item.get("link") or item.get("product_link")
 
-            # 2. ADIM: Başarılı olan Fiyat/Aksesuar Filtremiz (Bunu bozmadım)
-            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            if not link or item_price == 0: continue
+
+            # --- AKILLI DOĞRULAMA MOTORU ---
+
+            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
+            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
+            if current_price > 2000:
+                if item_price < (current_price * 0.60):
+                    continue
+            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
+                if item_price < (current_price * 0.50):
+                    continue
+
+            # 2. MODEL KODU KONTROLÜ
+            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
+            if model_codes:
+                if not any(code.lower() in item_title for code in model_codes[:2]):
+                    continue
+
+            # 3. KATEGORİSEL KELİME FİLTRESİ
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": direct_link, # Artık temiz ve direkt link
+                "link": link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
+        # Fiyata göre sırala (Mağaza bazlı temizlik)
         final_list.sort(key=lambda x: x['raw_price'])
         
         unique_results = []
@@ -103,3 +101,4 @@ def compare():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
