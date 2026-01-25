@@ -49,25 +49,25 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- KRİTİK LİNK TEMİZLEME KATMANI ---
-            raw_link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
+            # --- LİNK AYIKLAMA MOTORU (GÜNCELLENDİ) ---
+            link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
             
-            # Linkin içindeki gerçek URL'yi ayıkla
-            if "google.com" in raw_link or "googleusercontent.com" in raw_link:
-                # 'q=' veya 'url=' sonrasındaki her şeyi al
-                extracted = re.search(r'(?:url|q|adurl)=([^&]+)', raw_link)
+            # Google sarmalını (https://www.google.com/url?q=...) temizle
+            if "google.com" in link:
+                # Önce standart parametreleri dene
+                extracted = re.search(r'(?:url|q|adurl)=([^&]+)', link)
                 if extracted:
-                    raw_link = unquote(extracted.group(1))
-            
-            # Eğer hala içinde google varsa, linkin içindeki ilk 'http'yi bul ve oradan kes
-            if "google.com/url?" in raw_link:
-                start_index = raw_link.find("http", 4) # 4. karakterden sonraki http'yi bul
-                if start_index != -1:
-                    raw_link = raw_link[start_index:]
+                    link = unquote(extracted.group(1))
+                
+                # Eğer hala içinde google varsa, linki http üzerinden böl ve gerçek adresi al
+                if "google.com" in link and "http" in link:
+                    parts = link.split("http")
+                    if len(parts) > 1:
+                        link = "http" + parts[-1] # En sondaki http ile başlayan kısmı al
 
-            if not raw_link or item_price == 0: continue
+            if not link or item_price == 0: continue
 
-            # --- ESKİ ÇALIŞAN FİLTRELERİN (DOKUNULMADI) ---
+            # --- SENİN ÇALIŞAN FİLTRELERİN (AYNEN KORUNDU) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -83,7 +83,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": raw_link,
+                "link": link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
