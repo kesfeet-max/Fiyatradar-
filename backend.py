@@ -47,14 +47,16 @@ def compare():
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
+            
+            # --- LİNK GÜVENLİK KONTROLÜ ---
             link = item.get("link") or item.get("product_link")
-
             if not link or item_price == 0: continue
             
-            # --- GOOGLE HAPSINDEN KURTARAN FILTRE ---
-            if "/shopping/product/" in link: continue
+            # Hatalı Google sayfalarını (google.com/search veya /shopping/product) direkt eledik!
+            if "google.com/search" in link or "/shopping/product/" in link:
+                continue
 
-            # --- SENIN ORIJINAL DOĞRULAMA MANTIĞIN ---
+            # --- SENİN FİLTRELERİN ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -84,7 +86,6 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
