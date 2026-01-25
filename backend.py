@@ -11,10 +11,9 @@ CORS(app)
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
 def parse_price(price_str):
-    """Fiyat metnini sayıya çevirir."""
     if not price_str: return 0
     try:
-        # '₺295,00' -> '295'
+        # Fiyattaki gereksiz karakterleri temizler (₺, . , vb.)
         val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(val)
     except:
@@ -24,52 +23,46 @@ def parse_price(price_str):
 def compare():
     try:
         data = request.get_json()
-        original_title = data.get("title", "").lower()
+        # Alakasız ürünleri engellemek için başlığı olduğu gibi kullanıyoruz
+        original_title = data.get("title", "")
         
-        # Daha geniş sonuç için 3-4 kelimeye düşürelim
-        search_query = " ".join(original_title.split()[:4])
-
         params = {
             "engine": "google_shopping",
-            "q": search_query,
+            "q": original_title,
             "api_key": SERP_API_KEY,
             "hl": "tr",
-            "gl": "tr"
+            "gl": "tr",
+            "num": "15" # Daha fazla sonuç arasından en iyileri seçmek için
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
-        results = response.json().get("shopping_results", [])
+        shopping_results = response.json().get("shopping_results", [])
         
         final_list = []
-        for item in results:
-            # 1. LINK TEMIZLEME
-            raw_link = item.get("direct_link") or item.get("link") or ""
+        for item in shopping_results:
+            # Google sarmalından kurtulmak için en temiz linki seç
+            link = item.get("direct_link") or item.get("link") or ""
             
-            if "url?q=" in raw_link:
-                raw_link = raw_link.split("url?q=")[1].split("&")[0]
-            elif "adurl=" in raw_link:
-                raw_link = raw_link.split("adurl=")[1].split("&")[0]
-            
-            clean_url = unquote(raw_link)
-            
-            # 2. FIYAT ANALIZI
-            item_price = parse_price(item.get("price"))
+            # Link temizleme işlemi
+            if "url?q=" in link:
+                link = link.split("url?q=")[1].split("&")[0]
+            elif "adurl=" in link:
+                link = link.split("adurl=")[1].split("&")[0]
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": clean_url,
+                "link": unquote(link),
                 "image": item.get("thumbnail"),
-                "raw_price": item_price
+                "raw_price": parse_price(item.get("price"))
             })
         
-        # En ucuzdan pahalıya sırala
+        # En ucuz fiyatı başa getir
         final_list.sort(key=lambda x: x['raw_price'])
         
         return jsonify({"results": final_list[:10]})
 
     except Exception as e:
-        print(f"Hata oluştu: {str(e)}") # Loglarda hatayı görmek için
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
