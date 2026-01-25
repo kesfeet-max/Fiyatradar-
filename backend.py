@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import unquote, urlparse, parse_qs
 
 app = Flask(__name__)
 CORS(app)
@@ -36,7 +35,7 @@ def compare():
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60"
+            "hl": "tr", "gl": "tr", "num": "40"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
@@ -48,30 +47,11 @@ def compare():
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
+            source = item.get("source", "").lower()
             
-            # --- PROFESYONEL LİNK TEMİZLEME ---
-            raw_link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
-            
-            if "google.com" in raw_link:
-                # URL'yi parçalayıp sadece asıl hedefi (q= veya url=) alıyoruz
-                parsed_url = urlparse(raw_link)
-                query_params = parse_qs(parsed_url.query)
-                
-                actual_url = query_params.get('q') or query_params.get('url') or query_params.get('adurl')
-                
-                if actual_url:
-                    raw_link = actual_url[0] # İlk eşleşen temiz URL'yi al
-                
-                # Eğer hala içinde google varsa (iç içe yönlendirme), decode edip tekrar temizle
-                if "google.com" in raw_link and "http" in raw_link:
-                    raw_link = "http" + raw_link.split("http")[-1]
-            
-            # Linkin sonundaki Google takip kodlarını (&ved, &usg vb.) temizle
-            clean_link = raw_link.split('&')[0] if "google.com" in raw_link else raw_link
+            if item_price == 0: continue
 
-            if not clean_link or item_price == 0: continue
-
-            # --- SENİN FİLTRELERİN (DOKUNULMADI) ---
+            # --- ESKİ FİLTRE MANTIĞIN (KORUNDU) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -84,12 +64,14 @@ def compare():
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
+            # Linki temizlemekle uğraşmıyoruz, eklentiye ham veriyi gönderiyoruz
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": clean_link,
+                "link": item.get("link"), # Google Shopping linki (yedek)
                 "image": item.get("thumbnail"),
-                "raw_price": item_price
+                "raw_price": item_price,
+                "full_title": item.get("title") # Arama için tam başlık
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
