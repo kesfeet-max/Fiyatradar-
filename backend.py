@@ -16,10 +16,6 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def extract_model_code(title):
-    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
-    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
-
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -27,49 +23,40 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        words = original_title.split()
-        search_query = " ".join(words[:5])
-        model_codes = extract_model_code(original_title)
+        # Arama terimini biraz daha genişletelim (ilk 4 kelime)
+        search_query = " ".join(original_title.split()[:4])
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60"
+            "hl": "tr", "gl": "tr", "num": "40"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
+        # Yasaklı kelimeleri sadece aksesuar odaklı tutalım
+        forbidden = {"kordon", "kayış", "kılıf", "koruyucu", "cam", "sticker", "askı"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            
-            # --- KRİTİK LİNK TEMİZLİĞİ ---
             link = item.get("link") or item.get("product_link")
+
             if not link or item_price == 0: continue
-            
-            # Screenshot 45 & 48 Çözümü: Google Shopping katalog/arama sayfalarını atla
-            if "google.com/shopping/product/" in link or "google.com/search?" in link:
-                continue
 
-            # Screenshot 42 Çözümü: Protokol tamamlama
-            if link.startswith("//"): link = "https:" + link
-            elif not link.startswith("http"): link = "https://" + link
+            # --- GOOGLE PANELİNDEN KURTULMA ---
+            # Katalog sayfalarını direkt ele
+            if "/shopping/product/" in link: continue
 
-            # --- SENİN ORİJİNAL FİLTRELERİN ---
-            if current_price > 2000:
-                if item_price < (current_price * 0.60): continue
-            elif current_price > 500:
-                if item_price < (current_price * 0.50): continue
+            # --- ESNEK FİLTRELEME ---
+            # Ürünün fiyatı aşırı düşük değilse (sahte/aksesuar olma ihtimali) kabul et
+            # %70'den daha ucuz olanları ele (örneğin 371 TL'lik ürün 111 TL'den ucuzsa muhtemelen kordondur)
+            if item_price < (current_price * 0.30): continue
 
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]):
-                    continue
-
+            # Yasaklı kelime kontrolü
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
@@ -91,10 +78,8 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
