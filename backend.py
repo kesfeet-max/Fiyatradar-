@@ -20,68 +20,66 @@ def parse_price(price_str):
 def compare():
     try:
         data = request.get_json()
-        original_title = data.get("title", "")
+        original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # 1. ARAMA STRATEJİSİ: Daha fazla sonuç çekelim (40 -> 60)
-        # Sadece Marka + Model alarak n11/Hepsiburada'daki tüm varyasyonları yakala
-        clean_title = " ".join(original_title.split()[:6])
+        # 1. ADIM: Arama Sorgusunu Tırnak İçine Al (Birebir eşleşme için Google'ı zorlar)
+        # Sadece Marka ve Model'i alıyoruz.
+        words = original_title.split()
+        brand_model = " ".join(words[:4])
         
         params = {
             "engine": "google_shopping",
-            "q": clean_title,
+            "q": f'"{brand_model}"', # Tırnak ekledik: Mutlaka bu kelimeler geçmeli
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60" 
+            "hl": "tr", "gl": "tr", "num": "50"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = ["yedek parça", "aparat", "aksesuar", "kordon", "kılıf", "ikinci el"]
 
         for item in results:
-            item_title = item.get("title", "")
+            item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             actual_link = item.get("link") or item.get("product_link")
 
             if not actual_link or item_price == 0: continue
 
-            # 2. AKILLI EŞİK (200 TL HATASINI ÇÖZEN KISIM)
-            # Eğer fiyat farkı %15'ten az ise (Örn: 8000 TL vs 7800 TL) HİÇ SORGULAMA, GÖSTER.
-            # Çünkü bu gerçek bir rekabet fiyatıdır.
-            diff_ratio = abs(item_price - current_price) / current_price if current_price > 0 else 0
-            
-            is_valid = False
-            if diff_ratio < 0.15: 
-                is_valid = True # Küçük farklar her zaman geçerli
-            elif diff_ratio < 0.45:
-                # Orta farklarda (Örn: 8000 TL vs 5000 TL) kelime kontrolü yap
-                match_count = sum(1 for word in clean_title.split() if word.lower() in item_title.lower())
-                if match_count >= 2:
-                    is_valid = True
-            
-            # 3. YASAKLI KELİME (Sadece bariz hataları ele)
-            if any(f in item_title.lower() for f in forbidden) and not any(f in original_title.lower() for f in forbidden):
-                is_valid = False
+            # --- MİLYONLARCA ÜRÜN İÇİN EVRENSEL FİLTRELER ---
 
-            if is_valid:
-                final_list.append({
-                    "site": item.get("source"),
-                    "price": item.get("price"),
-                    "link": actual_link,
-                    "image": item.get("thumbnail"),
-                    "raw_price": item_price
-                })
-        
-        # 4. AYNI SİTEYİ TEKRAR GÖSTERME (Trendyol'dayken Trendyol'u gösterme)
-        current_url = data.get("url", "")
-        filtered_list = [i for i in final_list if i['site'].lower() not in current_url.lower()]
+            # A) FİYAT BARİYERİ (Kitap/Aksesuar Engelleyici)
+            # Eğer bulunan ürün, aranan üründen %70 daha ucuzsa (8000 TL vs 26 TL)
+            # Bu kesinlikle yanlış kategoridir (Kitap, kılıf, yedek parça). GÖSTERME!
+            if current_price > 200: # Çok ucuz ürünler hariç
+                if item_price < (current_price * 0.30): 
+                    continue
 
-        # Fiyata göre sırala
-        filtered_list.sort(key=lambda x: x['raw_price'])
+            # B) KELİME ZORUNLULUĞU
+            # Aranan ana marka ve model ismi (Örn: Samsung Tab A11) başlıkta yoksa ele.
+            required_keywords = words[:3] 
+            if not all(k.lower() in item_title for k in required_keywords):
+                continue
+
+            # C) YASAKLI KATEGORİ TEMİZLİĞİ
+            # Eğer ana ürün "kitap" değilse ama sonuçta kitap kelimeleri geçiyorsa ele.
+            book_words = ["kitap", "roman", "dergi", "kılıf", "ekran koruyucu", "yedek parça"]
+            if any(bw in item_title for bw in book_words) and not any(bw in original_title for bw in book_words):
+                continue
+
+            final_list.append({
+                "site": item.get("source"),
+                "price": item.get("price"),
+                "link": actual_link,
+                "image": item.get("thumbnail"),
+                "raw_price": item_price
+            })
         
-        return jsonify({"results": filtered_list[:10]})
+        # Fiyatları sırala (Gerçek rakipler arasında en ucuzu bul)
+        final_list.sort(key=lambda x: x['raw_price'])
+        
+        return jsonify({"results": final_list[:10]})
         
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
