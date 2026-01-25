@@ -17,7 +17,6 @@ def parse_price(price_str):
     except: return 0
 
 def extract_model_code(title):
-    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
@@ -28,15 +27,14 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        words = original_title.split()
-        search_query = " ".join(words[:5])
+        search_query = " ".join(original_title.split()[:5])
         model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60"
+            "hl": "tr", "gl": "tr", "num": "40"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
@@ -49,28 +47,26 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- LİNK GÜVENLİK KONTROLÜ ---
+            # --- LİNK TEMİZLEME ---
             link = item.get("product_link") or item.get("link")
             if not link or item_price == 0: continue
             
-            # Google'ın kendi karşılaştırma sayfalarını (Catalog/Product) SİL:
-            if "google.com/shopping/product/" in link or "google.com/search" in link:
-                continue 
-
-            # Protokolü düzelt (ERR_FILE_NOT_FOUND hatasını bitirir)
+            # Linkin başına protokol ekle (Screenshot 42'deki hatayı önler)
             if link.startswith("//"):
                 link = "https:" + link
 
-            # --- SENİN FİLTRE MANTIĞIN (DOKUNULMADI) ---
+            # --- ORIJINAL FİLTRELERİN (BOZULMADI) ---
+            # 1. Fiyat Bariyeri
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
                 if item_price < (current_price * 0.50): continue
 
+            # 2. Model Kodu Kontrolü
             if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]):
-                    continue
+                if not any(code.lower() in item_title for code in model_codes[:2]): continue
 
+            # 3. Yasaklı Kelime Kontrolü
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
@@ -97,5 +93,4 @@ def compare():
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
