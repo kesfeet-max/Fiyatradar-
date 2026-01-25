@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import urlparse, parse_qs, unquote # Link temizleme için gerekli
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -23,16 +23,25 @@ def extract_model_code(title):
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
 def clean_direct_link(google_link):
-    """Google'ın yönlendirme linkinden asıl mağaza linkini çıkarır."""
-    if not google_link or "google.com" not in google_link:
+    """Google'ın yönlendirme katmanını soyar ve asıl mağaza linkini döndürür."""
+    if not google_link:
+        return ""
+    if "google.com" not in google_link:
         return google_link
+    
     try:
         parsed_url = urlparse(google_link)
         params = parse_qs(parsed_url.query)
-        # Google Shopping linklerinde asıl hedef genellikle 'adurl' veya 'url' içindedir
-        actual_url = params.get('adurl') or params.get('url')
+        
+        # Google Shopping yönlendirmelerinde asıl adres bu parametrelerden birindedir
+        actual_url = params.get('adurl') or params.get('url') or params.get('q')
+        
         if actual_url:
-            return unquote(actual_url[0])
+            cleaned = unquote(actual_url[0])
+            # Eğer iç içe bir yönlendirme varsa (tekrar google linki gelirse) temizlemeye devam et
+            if "google.com" in cleaned:
+                return clean_direct_link(cleaned)
+            return cleaned
     except:
         pass
     return google_link
@@ -44,7 +53,7 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # Arama terimi (Marka + Model)
+        # Arama terimi
         words = original_title.split()
         search_query = " ".join(words[:5])
         model_codes = extract_model_code(original_title)
@@ -60,20 +69,20 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Kesinlikle elenmesi gereken kelimeler
         forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- LINK TEMIZLEME ---
-            raw_link = item.get("link") or item.get("product_link")
+            # --- GELİŞMİŞ LİNK TEMİZLEME ---
+            # Önce product_link'i dene, yoksa normal linki al ve temizle
+            raw_link = item.get("product_link") or item.get("link")
             direct_link = clean_direct_link(raw_link)
 
             if not direct_link or item_price == 0: continue
 
-            # --- SENİN FİLTRE MANTIĞIN (ASLA DOKUNULMADI) ---
+            # --- SENİN FİLTRE MANTIĞIN (KORUNDU) ---
 
             # 1. SERT FİYAT BARAJI
             if current_price > 2000:
@@ -95,7 +104,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": direct_link, # Temizlenmiş link kullanılıyor
+                "link": direct_link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
@@ -103,6 +112,7 @@ def compare():
         # Fiyata göre sırala
         final_list.sort(key=lambda x: x['raw_price'])
         
+        # Mağaza bazlı tekilleştirme
         unique_results = []
         seen_sites = set()
         for res in final_list:
