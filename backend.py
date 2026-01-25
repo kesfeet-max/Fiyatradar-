@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
 
 app = Flask(__name__)
 CORS(app)
@@ -49,22 +49,29 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- AGRESİF LİNK TEMİZLEME ---
-            link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
+            # --- PROFESYONEL LİNK TEMİZLEME ---
+            raw_link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
             
-            if "google.com" in link:
-                # Linkin içindeki 'q=' veya 'url=' sonrasını yakala
-                found = re.search(r'(?:url|q|adurl)=([^&]+)', link)
-                if found:
-                    link = unquote(found.group(1))
+            if "google.com" in raw_link:
+                # URL'yi parçalayıp sadece asıl hedefi (q= veya url=) alıyoruz
+                parsed_url = urlparse(raw_link)
+                query_params = parse_qs(parsed_url.query)
                 
-                # Eğer hala içinde google varsa, linki http üzerinden temizle
-                if "google.com" in link and "http" in link:
-                    link = "http" + link.split("http")[-1]
+                actual_url = query_params.get('q') or query_params.get('url') or query_params.get('adurl')
+                
+                if actual_url:
+                    raw_link = actual_url[0] # İlk eşleşen temiz URL'yi al
+                
+                # Eğer hala içinde google varsa (iç içe yönlendirme), decode edip tekrar temizle
+                if "google.com" in raw_link and "http" in raw_link:
+                    raw_link = "http" + raw_link.split("http")[-1]
+            
+            # Linkin sonundaki Google takip kodlarını (&ved, &usg vb.) temizle
+            clean_link = raw_link.split('&')[0] if "google.com" in raw_link else raw_link
 
-            if not link or item_price == 0: continue
+            if not clean_link or item_price == 0: continue
 
-            # --- SENİN ÇALIŞAN FİLTRELERİN ---
+            # --- SENİN FİLTRELERİN (DOKUNULMADI) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -80,7 +87,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": link,
+                "link": clean_link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
