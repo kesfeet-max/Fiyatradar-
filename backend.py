@@ -58,7 +58,7 @@ def compare():
             is_match = all(word in item_title for word in search_words)
 
             # Filtreleme: Yasaklı kelime yoksa ve 5000 TL üzerindeyse ekle
-            if is_match and not any(f in item_title for f in forbidden) and price_val > 5000:
+            if is_match and not any(f in item_title for f in forbidden) and price_val > 100:
                 final_list.append({
                     "site": item.get("source"),
                     "price": item.get("price"),
@@ -77,3 +77,4 @@ def compare():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000)) # Render genelde 10000 kullanır
     app.run(host='0.0.0.0', port=port)
+
