@@ -47,11 +47,11 @@ def compare():
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            source = item.get("source", "").lower()
+            source = item.get("source", "")
             
             if item_price == 0: continue
 
-            # --- ESKİ FİLTRE MANTIĞIN (KORUNDU) ---
+            # --- SENİN FİLTRELERİN (DOKUNULMADI) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -64,14 +64,13 @@ def compare():
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
-            # Linki temizlemekle uğraşmıyoruz, eklentiye ham veriyi gönderiyoruz
+            # BURADA KRİTİK DEĞİŞİKLİK: Google linkini göndermiyoruz!
             final_list.append({
-                "site": item.get("source"),
+                "site": source,
                 "price": item.get("price"),
-                "link": item.get("link"), # Google Shopping linki (yedek)
                 "image": item.get("thumbnail"),
                 "raw_price": item_price,
-                "full_title": item.get("title") # Arama için tam başlık
+                "product_name": item.get("title") # Mağaza içinde aratmak için
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
