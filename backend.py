@@ -16,24 +16,28 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
+def get_match_score(original, target):
+    """İki başlık arasındaki benzerliği puanlar (0-100)"""
+    original_words = set(re.findall(r'\w+', original.lower()))
+    target_words = set(re.findall(r'\w+', target.lower()))
+    
+    if not original_words: return 0
+    common = original_words.intersection(target_words)
+    return (len(common) / len(original_words)) * 100
+
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
         data = request.get_json()
-        original_title = data.get("title", "").lower()
+        original_title = data.get("title", "")
         current_price = parse_price(data.get("price", "0"))
         
-        is_set = any(word in original_title for word in ["set", "takım", "3'lü", "komple"])
+        # ARAMA: En doğru sonuç için ilk 4-5 kelimeyi tırnak içinde göndererek Google'ı zorluyoruz
+        brand_model = " ".join(original_title.split()[:5])
         
-        # Apple ve Saat gibi varyasyonlu ürünler için kapasite/model kilidi
-        must_contain = re.findall(r'(\d+\s*[gt]b|pro\s*max|ultra)', original_title)
-
-        search_words = original_title.split()[:5]
-        search_query = " ".join(search_words)
-
         params = {
             "engine": "google_shopping",
-            "q": search_query,
+            "q": brand_model,
             "api_key": SERP_API_KEY,
             "hl": "tr", "gl": "tr", "num": "40"
         }
@@ -42,52 +46,47 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "filtre", "kitap", "dvd", "ikinci el", "kordon", "kılıf"]
-
         for item in results:
-            item_title = item.get("title", "").lower()
+            item_title = item.get("title", "")
             item_price = parse_price(item.get("price"))
+            actual_link = item.get("link") or item.get("product_link")
+
+            if not actual_link or item_price == 0: continue
+
+            # --- MİLYONLARCA ÜRÜN İÇİN GENEL MANTIK ---
             
-            # --- LİNK DÜZELTME (Boş sayfa açılmasını engelleyen kısım) ---
-            # link yoksa product_link, o da yoksa serpapi_link dene
-            valid_link = item.get("link") or item.get("product_link") or item.get("serpapi_product_api")
+            # 1. Benzerlik Puanı: Başlıkların en az %50'si örtüşmeli
+            score = get_match_score(original_title, item_title)
+            if score < 50: continue
 
-            # --- AKILLI FİLTRELER ---
-
-            # 1. Boş linkleri ele
-            if not valid_link:
-                continue
-
-            # 2. GB/TB ve Model Kilidi (iPhone hatasını çözer)
-            if must_contain and not all(spec in item_title for spec in must_contain):
-                continue
-
-            # 3. Set Kontrolü
-            if is_set and not any(word in item_title for word in ["set", "takım", "3'lü"]):
-                continue
-
-            # 4. Fiyat Sapması (134k saate 14k göstermez)
-            if current_price > 1000:
-                # Fiyat farkı %50'den fazlaysa şüphelidir, gösterme
-                if item_price < (current_price * 0.50) or item_price > (current_price * 2.0):
+            # 2. Fiyat Uçurumu (En Önemli Kriter):
+            # Milyonlarca üründe değişmeyen kural: Bir ürünün asıl fiyatı ile 
+            # "aksesuar/yedek parça" fiyatı arasında uçurum vardır.
+            # %50'den daha ucuz olan ürün "BAŞKA BİR ŞEYDİR" (istisnalar hariç).
+            if current_price > 500: # Ucuz ürünlerde esnek, pahalıda katı
+                price_ratio = item_price / current_price
+                if price_ratio < 0.50 or price_ratio > 2.0:
                     continue
-
-            # 5. Yasaklı Kelime Kontrolü
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
-                continue
+            
+            # 3. Spesifik Kelime Kontrolü (Hafıza, Set vb.)
+            # Aranan üründe rakamsal bir değer (256GB, 2TB, 3'lü) varsa, sonuçta da olmalı.
+            original_specs = re.findall(r'\d+\s*[gt]b|\d+[\s\-\']?li|\d+[\s\-\']?lü', original_title.lower())
+            if original_specs:
+                if not any(spec in item_title.lower() for spec in original_specs):
+                    continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": valid_link,
+                "link": actual_link,
                 "image": item.get("thumbnail"),
-                "raw_price": item_price
+                "raw_price": item_price,
+                "score": score
             })
         
-        final_list.sort(key=lambda x: x['raw_price'])
+        # Hem puana hem fiyata göre akıllı sıralama
+        final_list.sort(key=lambda x: (-x['score'], x['raw_price']))
         
-        # Eğer hiç sonuç kalmadıysa (filtreler hepsini elediyse) 
-        # Kullanıcıya dürüstçe boş liste döndür
         return jsonify({"results": final_list[:8]})
         
     except Exception as e:
