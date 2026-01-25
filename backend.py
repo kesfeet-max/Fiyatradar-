@@ -9,79 +9,69 @@ CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
-def parse_price(price_str):
-    if not price_str: return 0
-    try:
-        val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
-        return int(val)
-    except: return 0
+def extract_specifications(text):
+    """Başlıktan GB, TB, Pro, Max gibi kritik özellikleri ayıklar."""
+    specs = []
+    # GB veya TB değerlerini yakala (Örn: 128GB, 256 gb, 2TB)
+    capacity = re.findall(r'(\d+\s*[gt]b)', text.lower())
+    if capacity:
+        specs.extend(capacity)
+    
+    # Model spesifik kelimeleri yakala
+    models = ["pro max", "pro", "plus", "ultra"]
+    for m in models:
+        if m in text.lower():
+            specs.append(m)
+            break # Pro Max varsa Pro'yu ayrıca ekleme
+    return specs
 
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
         data = request.get_json()
         original_title = data.get("title", "").lower()
-        current_price = parse_price(data.get("price", "0"))
+        current_price = int(re.sub(r'[^\d]', '', data.get("price", "0").split(',')[0]))
         
-        # 1. ANALİZ: Ürün bir "SET" mi?
-        is_set = any(word in original_title for word in ["set", "takım", "3'lü", "komple"])
+        # --- KRİTİK: Teknik Özellikleri Kilitle ---
+        required_specs = extract_specifications(original_title)
         
-        # Arama sorgusunu daralt (Marka + Model + Kritik Kelime)
-        search_words = original_title.split()[:4]
-        search_query = " ".join(search_words)
-
         params = {
             "engine": "google_shopping",
-            "q": search_query,
+            "q": original_title, # Sorguyu olduğu gibi gönderiyoruz
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "40"
+            "hl": "tr", "gl": "tr", "num": "30"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Çok daha katı yasaklı listesi (Aksesuar koruması)
-        forbidden = ["tel", "izgara", "yedek", "parça", "aksesuar", "filtre", "kitap", "dvd", "ikinci el"]
-
         for item in results:
             item_title = item.get("title", "").lower()
-            item_price = parse_price(item.get("price"))
-            
-            # --- KRİTİK FİLTRELEME MANTIKLARI ---
+            item_price = int(re.sub(r'[^\d]', '', item.get("price", "0").split(',')[0]))
 
-            # A) SET KONTROLÜ (Screenshot_24 Çözümü):
-            # Eğer asıl ürün SET ise ve bulunan üründe "set" kelimesi geçmiyorsa, bu parçadır. ELE!
-            if is_set and not any(word in item_title for word in ["set", "takım", "3'lü"]):
+            # 1. KURAL: TEKNİK ÖZELLİK KONTROLÜ (2TB varsa 2TB olmalı!)
+            # Eğer orijinalde "2tb" varsa ama sonuçta yoksa, o ürün çöptür.
+            if not all(spec in item_title for spec in required_specs):
                 continue
 
-            # B) FİYAT SAPMASI (Hayati Önem):
-            # Gerçek ürünün fiyatından %40'tan fazla sapma varsa o ürün "başka bir şeydir".
-            # 17.000 TL'lik set yerine 8.000 TL'lik sonuç gelirse otomatik elenir.
+            # 2. KURAL: FİYAT BANDI (Aşırı sapanları ele)
+            # iPhone'da %20'den fazla ucuz olması imkansızdır (başka modeldir).
             if current_price > 0:
                 deviation = abs(item_price - current_price) / current_price
-                if deviation > 0.40: # %40'tan fazla fark varsa (çok ucuz veya çok pahalı)
+                if deviation > 0.25: # iPhone'lar için daha dar bir limit (%25)
                     continue
-
-            # C) BAŞLIK EŞLEŞME PUANI:
-            # Aranan kelimelerin en az %70'i başlıkta geçmeli.
-            match_count = sum(1 for word in search_words if word.lower() in item_title)
-            if match_count < len(search_words) * 0.7:
-                continue
 
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": item.get("link") or item.get("product_link"),
+                "link": item.get("link"),
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
         
+        # En ucuz gerçek sonuçları getir
         final_list.sort(key=lambda x: x['raw_price'])
-        return jsonify({"results": final_list[:6]})
+        return jsonify({"results": final_list[:8]})
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
