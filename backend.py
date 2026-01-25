@@ -49,22 +49,22 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- LİNK TEMİZLEME MOTORU ---
+            # --- GOOGLE YÖNLENDİRMESİNİ TEMİZLEME MOTORU ---
             link = item.get("direct_link") or item.get("link") or item.get("product_link") or ""
             
-            if "google.com" in link:
-                extracted = re.search(r'(?:url|q|adurl)=([^&]+)', link)
-                if extracted:
-                    link = unquote(extracted.group(1))
+            if "google.com" in link or "googleusercontent.com" in link:
+                # q= veya url= parametresinden sonraki asıl linki çek
+                match = re.search(r'(?:url|q|adurl)=([^&]+)', link)
+                if match:
+                    link = unquote(match.group(1))
                 
+                # Eğer link hala Google sarmalı içindeyse son çare olarak http üzerinden böl
                 if "google.com" in link and "http" in link:
-                    parts = link.split("http")
-                    if len(parts) > 1:
-                        link = "http" + parts[-1]
+                    link = "http" + link.split("http")[-1]
 
             if not link or item_price == 0: continue
 
-            # --- SENİN FİLTRELERİN ---
+            # --- SENİN ÇALIŞAN FİLTRELERİN (DOKUNULMADI) ---
             if current_price > 2000:
                 if item_price < (current_price * 0.60): continue
             elif current_price > 500:
@@ -86,7 +86,6 @@ def compare():
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
-        
         unique_results = []
         seen_sites = set()
         for res in final_list:
