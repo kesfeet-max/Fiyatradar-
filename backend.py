@@ -16,7 +16,7 @@ def home():
 def parse_price(price_str):
     if not price_str: return 0
     try:
-        # Fiyat metnindeki sayısal olmayan her şeyi temizler
+        # Fiyatı sayıya çevirir (Örn: "3.260,40 TL" -> 3260)
         val = re.sub(r'[^\d]', '', str(price_str).split(',')[0])
         return int(val)
     except: return 0
@@ -29,61 +29,55 @@ def compare():
             return jsonify({"results": [], "error": "Veri gonderilmedi"}), 400
             
         original_title = data.get("title", "").strip()
+        # Eklentiden gelen o anki sayfa fiyatı
+        current_page_price = parse_price(data.get("price", "0"))
         
-        # ARAMA STRATEJİSİ: 
-        # Sadece ilk 3 kelime bazen çok genel kalıyor. 
-        # Eğer başlıkta "Eğitim Seti" gibi kritik ibareler varsa onları da aramaya ekliyoruz.
-        search_words = original_title.lower().split()[:4] # 4 kelimeye çıkardık
+        # Arama sorgusu
+        search_words = original_title.lower().split()[:4]
         search_query = " ".join(search_words)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", 
-            "gl": "tr",
-            "num": "40" 
+            "hl": "tr", "gl": "tr",
+            "num": "30"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Senin aradığın büyük setlerle karışabilecek küçük/yan ürünleri engelleme listesi
-        forbidden = ["kılıf", "case", "cam", "film", "kapak", "yedek", "parça", "tamir", "dvd", "2.el", "ikinci el"]
+        forbidden = ["dvd", "2.el", "ikinci el", "kullanılmış", "tek kitap", "parça"]
 
         for item in results:
             item_title = item.get("title", "").lower()
-            price_val = parse_price(item.get("price"))
-            link = item.get("link") or item.get("product_link")
+            item_price = parse_price(item.get("price"))
+            
+            # --- GELİŞMİŞ FİLTRELEME ---
+            
+            # 1. Fiyat Koruma: Aranan üründen %50 daha ucuz olanları gösterme (Kitap/DVD ayrımı)
+            if current_page_price > 0:
+                if item_price < (current_page_price * 0.6): # Örn: 3000 TL ürün için 1800 TL altını eler
+                    continue
 
-            # MODEL EŞLEŞME KONTROLÜ
-            # Aranan ilk iki kelime (genelde marka ve model) mutlaka başlıkta geçmeli
+            # 2. Marka Kontrolü: İlk iki kelime mutlaka başlıkta geçmeli
             is_match = all(word in item_title for word in search_words[:2])
-
-            # FİLTRELEME KURALLARI:
-            # 1. Marka eşleşmeli
-            # 2. Yasaklı kelime içermemeli
-            # 3. 150 TL'den ucuz olmamalı (kargo bedeli veya çok alakasız küçük parçaları eler)
-            if is_match and not any(f in item_title for f in forbidden) and price_val > 150:
+            
+            if is_match and not any(f in item_title for f in forbidden):
                 final_list.append({
                     "site": item.get("source"),
                     "price": item.get("price"),
-                    "link": link,
-                    "raw_price": price_val
+                    "link": item.get("link") or item.get("product_link"),
+                    "raw_price": item_price
                 })
         
-        # En ucuzdan pahalıya sırala
         final_list.sort(key=lambda x: x['raw_price'])
-        
-        # Eğer sonuç çoksa, en alakalı ilk 10 tanesini döndür
-        return jsonify({"results": final_list[:10]})
+        return jsonify({"results": final_list[:8]})
 
     except Exception as e:
-        print(f"Sunucu Hatasi: {str(e)}")
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    # Render ve yerel çalışma için dinamik port ayarı
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
