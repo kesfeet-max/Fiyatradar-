@@ -16,22 +16,22 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def get_keywords(text):
-    """Metinden marka, model ve önemli teknik terimleri ayıklar."""
-    clean = re.sub(r'[^\w\s]', '', text.lower())
-    words = clean.split()
-    # İlk 5 kelime genelde en belirleyici olandır
-    return words[:5]
+def extract_model_code(title):
+    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
+    codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
+    return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
         data = request.get_json()
-        original_title = data.get("title", "")
+        original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        keywords = get_keywords(original_title)
-        search_query = " ".join(keywords)
+        # Arama terimi (Marka + Model)
+        words = original_title.split()
+        search_query = " ".join(words[:5])
+        model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
@@ -43,12 +43,9 @@ def compare():
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
-        final_results = []
-        # Saat ve elektronik için tehlikeli 'aksesuar' kelimeleri
-        trash_words = {
-            "kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", 
-            "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı"
-        }
+        final_list = []
+        # Kesinlikle elenmesi gereken kelimeler
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
 
         for item in results:
             item_title = item.get("title", "").lower()
@@ -57,42 +54,41 @@ def compare():
 
             if not link or item_price == 0: continue
 
-            # 1. ANALİZ: Kelime Eşleşme Puanı
-            matches = sum(1 for k in keywords if k in item_title)
-            match_score = matches / len(keywords) if keywords else 0
+            # --- AKILLI DOĞRULAMA MOTORU ---
 
-            # 2. KRİTİK FİLTRELER
-            # A) Kelime Uyumu (Yarıdan fazlası tutmalı)
-            if match_score < 0.55: continue
-
-            # B) FİYAT DUVARI (Saat kordonu engelleyici)
-            # Eğer ürün 500 TL üzerindeyse, bakılan fiyattan %50 ucuz olamaz.
-            # (10.000 TL saate 5.000 TL altı ürün gelemez)
-            if current_price > 500:
+            # 1. SERT FİYAT BARAJI: Saat kordonunu silecek ana filtre
+            # Ürün 2000 TL üzerindeyse, fiyat farkı %40'tan fazla olamaz (Örn: 10k ürün 6k'dan aşağı olamaz)
+            if current_price > 2000:
+                if item_price < (current_price * 0.60):
+                    continue
+            elif current_price > 500: # Daha ucuz ürünler için %50 tolerans
                 if item_price < (current_price * 0.50):
                     continue
 
-            # C) ÇÖP KELİME KONTROLÜ
-            # Orijinal başlıkta 'kordon' yoksa ama sonuçta varsa ele.
-            if any(tw in item_title for tw in trash_words) and not any(tw in original_title.lower() for tw in trash_words):
+            # 2. MODEL KODU KONTROLÜ
+            # Eğer orijinal başlıkta 'GT 5 Pro' varsa, sonuçta da mutlaka 'GT 5' geçmeli.
+            if model_codes:
+                if not any(code.lower() in item_title for code in model_codes[:2]):
+                    continue
+
+            # 3. KATEGORİSEL KELİME FİLTRESİ
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
-            final_results.append({
+            final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
                 "link": link,
                 "image": item.get("thumbnail"),
-                "raw_price": item_price,
-                "score": match_score
+                "raw_price": item_price
             })
         
-        # Puan (Doğruluk) öncelikli, sonra en ucuz fiyat sıralaması
-        final_results.sort(key=lambda x: (-x['score'], x['raw_price']))
+        # Fiyata göre sırala (Mağaza bazlı temizlik)
+        final_list.sort(key=lambda x: x['raw_price'])
         
-        # Site tekrarlarını temizle (Aynı fiyata 5 tane Hepsiburada gelmesin)
-        seen_sites = set()
         unique_results = []
-        for res in final_results:
+        seen_sites = set()
+        for res in final_list:
             if res['site'] not in seen_sites:
                 unique_results.append(res)
                 seen_sites.add(res['site'])
