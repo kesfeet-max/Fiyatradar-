@@ -23,7 +23,7 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        # Arama terimini biraz daha genişletelim (ilk 4 kelime)
+        # Arama terimi: İlk 4 kelimeye odaklanarak daha geniş sonuç alıyoruz
         search_query = " ".join(original_title.split()[:4])
 
         params = {
@@ -37,8 +37,7 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Yasaklı kelimeleri sadece aksesuar odaklı tutalım
-        forbidden = {"kordon", "kayış", "kılıf", "koruyucu", "cam", "sticker", "askı"}
+        forbidden = {"kordon", "kayış", "kılıf", "koruyucu", "cam", "sticker", "yedek parça"}
 
         for item in results:
             item_title = item.get("title", "").lower()
@@ -47,16 +46,13 @@ def compare():
 
             if not link or item_price == 0: continue
 
-            # --- GOOGLE PANELİNDEN KURTULMA ---
-            # Katalog sayfalarını direkt ele
+            # Google Katalog sayfalarını (Screenshot 45/48) engelliyoruz
             if "/shopping/product/" in link: continue
 
-            # --- ESNEK FİLTRELEME ---
-            # Ürünün fiyatı aşırı düşük değilse (sahte/aksesuar olma ihtimali) kabul et
-            # %70'den daha ucuz olanları ele (örneğin 371 TL'lik ürün 111 TL'den ucuzsa muhtemelen kordondur)
+            # Fiyat Filtresi: Orijinal fiyatın %30'undan aşağısını aksesuar sayıp eliyoruz
             if item_price < (current_price * 0.30): continue
-
-            # Yasaklı kelime kontrolü
+            
+            # Kelime Filtresi: Başlıkta yasaklı kelime varsa ele
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
 
