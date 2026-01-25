@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
 import os
-from urllib.parse import unquote
+from urllib.parse import unquote # Link temizleme için gerekli
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +18,7 @@ def parse_price(price_str):
     except: return 0
 
 def extract_model_code(title):
+    """Başlıktaki GT 5 Pro, A11, HR1832 gibi model kodlarını yakalar."""
     codes = re.findall(r'[A-Z0-9]+\s?[A-Z0-9]*', title.upper())
     return [c for c in codes if len(c) > 2 and any(char.isdigit() for char in c)]
 
@@ -49,22 +50,27 @@ def compare():
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # --- LİNK TEMİZLEME: SADECE BURAYI EKLEDİM ---
-            raw_link = item.get("direct_link") or item.get("link") or ""
-            if "google.com/url?" in raw_link:
-                # Google sarmalını çözüp içindeki gerçek adresi alıyoruz
-                match = re.search(r'(?:url|q)=(https?://[^&]+)', raw_link)
-                if match:
-                    raw_link = unquote(match.group(1))
+            # --- GOOGLE ENGELİNDEN KURTARMA KODU (BAŞLANGIÇ) ---
+            # Google'ın verdiği 'direct_link' varsa onu al, yoksa normal linki al ve içini temizle
+            link = item.get("direct_link") or item.get("link") or item.get("product_link")
             
-            if not raw_link or item_price == 0: continue
+            if link and "google.com/url?" in link:
+                # Linkin içindeki gerçek site adresini (q= veya url= sonrasını) cımbızla çeker
+                match = re.search(r'(?:url|q|adurl)=([^&]+)', link)
+                if match:
+                    link = unquote(match.group(1))
+            # --- GOOGLE ENGELİNDEN KURTARMA KODU (BİTİŞ) ---
 
-            # --- ESKİ FİLTRELEME MANTIĞIN (DOKUNULMADI) ---
-            if current_price > 2000 and item_price < (current_price * 0.60): continue
-            elif current_price > 500 and item_price < (current_price * 0.50): continue
+            if not link or item_price == 0: continue
 
-            if model_codes and not any(code.lower() in item_title for code in model_codes[:2]):
-                continue
+            if current_price > 2000:
+                if item_price < (current_price * 0.60): continue
+            elif current_price > 500:
+                if item_price < (current_price * 0.50): continue
+
+            if model_codes:
+                if not any(code.lower() in item_title for code in model_codes[:2]):
+                    continue
 
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
                 continue
@@ -72,7 +78,7 @@ def compare():
             final_list.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": raw_link,
+                "link": link, # Artık temizlenmiş link gidiyor
                 "image": item.get("thumbnail"),
                 "raw_price": item_price
             })
@@ -92,4 +98,5 @@ def compare():
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
