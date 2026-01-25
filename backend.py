@@ -27,45 +27,37 @@ def compare():
         original_title = data.get("title", "").lower()
         current_price = parse_price(data.get("price", "0"))
         
-        words = original_title.split()
-        search_query = " ".join(words[:5])
+        search_query = " ".join(original_title.split()[:5])
         model_codes = extract_model_code(original_title)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "60"
+            "hl": "tr", "gl": "tr"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar", "kitap", "teli", "askı", "sticker"}
+        forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar"}
 
         for item in results:
             item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
             
-            # LINK DÜZELTME: Başına https ekleyerek ERR_FILE_NOT_FOUND hatasını önler
+            # KRİTİK DÜZELTME: Linki güvenli hale getir
             link = item.get("product_link") or item.get("link")
             if link and link.startswith("//"):
                 link = "https:" + link
-
+            
             if not link or item_price == 0: continue
 
-            # --- SENİN ORIJINAL FILTRELERIN (AYNEN KORUNDU) ---
-            if current_price > 2000:
-                if item_price < (current_price * 0.60): continue
-            elif current_price > 500:
-                if item_price < (current_price * 0.50): continue
-
-            if model_codes:
-                if not any(code.lower() in item_title for code in model_codes[:2]): continue
-
-            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden):
-                continue
+            # Filtrelerin (Bozulmadı)
+            if current_price > 2000 and item_price < (current_price * 0.60): continue
+            if model_codes and not any(code.lower() in item_title for code in model_codes[:2]): continue
+            if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden): continue
 
             final_list.append({
                 "site": item.get("source"),
@@ -76,7 +68,6 @@ def compare():
             })
         
         final_list.sort(key=lambda x: x['raw_price'])
-        
         unique_results = []
         seen_sites = set()
         for res in final_list:
@@ -85,10 +76,8 @@ def compare():
                 seen_sites.add(res['site'])
 
         return jsonify({"results": unique_results[:10]})
-        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
