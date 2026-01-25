@@ -16,11 +16,12 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def get_clean_words(text):
-    """Metni temizler ve kelime kümesine (set) çevirir."""
-    # Gereksiz kısa kelimeleri ve bağlaçları atar
-    words = re.findall(r'\w+', text.lower())
-    return set([w for w in words if len(w) > 1])
+def get_keywords(text):
+    """Metni en önemli 3-4 anahtar kelimeye indirger."""
+    clean = re.sub(r'[^\w\s]', '', text.lower())
+    words = clean.split()
+    # İlk 4 kelime genellikle Marka + Model'dir ve en önemli kısımdır.
+    return words[:5]
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -29,69 +30,61 @@ def compare():
         original_title = data.get("title", "")
         current_price = parse_price(data.get("price", "0"))
         
-        # 1. ADIM: Orijinal başlığı kelime torbasına çevir
-        original_words = get_clean_words(original_title)
-        
-        # Arama için ilk 5 anahtar kelimeyi kullan (Google kısıtı nedeniyle)
-        search_query = " ".join(list(original_words)[:6])
+        # ANAHTAR KELİME TABANLI ARAMA
+        keywords = get_keywords(original_title)
+        search_query = " ".join(keywords)
 
         params = {
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "num": "50"
+            "hl": "tr", "gl": "tr", "num": "60" # Daha geniş tarama (60 sonuç)
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
-        final_list = []
-        # Parça/Aksesuar/Kitap engelleyici yasaklı kelimeler
-        forbidden = {"kitap", "kılıf", "koruyucu", "yedek", "parça", "aparat", "aksesuar", "ikinci", "kordon"}
+        final_results = []
+        # Parça/Aksesuar/Kitap engelleyiciler
+        trash_words = {"kitap", "kılıf", "koruyucu", "yedek", "parça", "aparat", "aksesuar", "ikinci", "kordon", "teli"}
 
         for item in results:
-            item_title = item.get("title", "")
+            item_title = item.get("title", "").lower()
             item_price = parse_price(item.get("price"))
-            actual_link = item.get("link") or item.get("product_link")
+            link = item.get("link") or item.get("product_link")
 
-            if not actual_link or item_price == 0: continue
+            if not link or item_price == 0: continue
 
-            # 2. ADIM: Kelime Eşleşme Analizi (Sıralama Bağımsız)
-            item_words = get_clean_words(item_title)
-            
-            # Orijinal başlıktaki kelimelerin kaç tanesi gelen sonuçta var?
-            common_words = original_words.intersection(item_words)
-            match_ratio = len(common_words) / len(original_words) if original_words else 0
+            # 1. PUANLAMA: Orijinal anahtar kelimelerin kaçı başlıkta geçiyor?
+            matches = sum(1 for k in keywords if k in item_title)
+            match_score = matches / len(keywords) if keywords else 0
 
-            # --- CIMRI GİBİ KATI DOĞRULAMA ---
+            # 2. KRİTİK FİLTRELER
+            # A) Eğer anahtar kelimelerin yarısı bile yoksa bu ürün yanlıştır.
+            if match_score < 0.50: continue
 
-            # A) Kelime Eşleşme Oranı: Başlığın en az %60'ı (önemli kelimeler) tutmalı
-            if match_ratio < 0.60:
+            # B) Fiyat Koruması (Uçurum Koruma): 
+            # 5000 TL'lik üründe 100 TL'lik kitapları eler, ama 4290 TL'lik n11'i elimez.
+            if current_price > 1000:
+                if item_price < (current_price * 0.40): continue
+
+            # C) Manuel Engelleme: Başlıkta çöp kelime varsa ve orijinalde yoksa ele.
+            if any(tw in item_title for tw in trash_words) and not any(tw in original_title.lower() for tw in trash_words):
                 continue
 
-            # B) Fiyat Bariyeri: Eğer bulunan ürün bakılanın %40'ından ucuzsa (8000 vs 3000)
-            # Bu kesinlikle başka bir üründür (Örn: Kitap veya Cam).
-            if current_price > 500:
-                if item_price < (current_price * 0.45):
-                    continue
-
-            # C) Ters Kontrol: Eğer aranan üründe "kitap" yoksa ama sonuçta varsa ele
-            if any(f in item_words for f in forbidden) and not any(f in original_words for f in forbidden):
-                continue
-
-            final_list.append({
+            final_results.append({
                 "site": item.get("source"),
                 "price": item.get("price"),
-                "link": actual_link,
+                "link": link,
                 "image": item.get("thumbnail"),
                 "raw_price": item_price,
-                "match": int(match_ratio * 100)
+                "score": match_score
             })
         
-        # Hem fiyata hem de eşleşme kalitesine göre sırala
-        final_list.sort(key=lambda x: x['raw_price'])
+        # SIRALAMA: Önce en yüksek eşleşme puanı, sonra en düşük fiyat
+        final_results.sort(key=lambda x: (-x['score'], x['raw_price']))
         
-        return jsonify({"results": final_list[:12]})
+        return jsonify({"results": final_results[:10]})
         
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
