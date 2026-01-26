@@ -25,13 +25,16 @@ def compare():
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        for item in results[:8]:
-            # undefined hatasını engellemek için varsayılan değerler atıyoruz
+        for item in results[:10]:
+            # KRİTİK VERİ: Ürün ID'sini alıyoruz (Bizi kategori sayfasından kurtaracak olan bu)
+            product_id = item.get("product_id", "")
+            
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": item.get("price", "Fiyat Yok"),
                 "image": item.get("thumbnail", ""),
-                "title": item.get("title", search_query) # Ürün ismini gönderiyoruz
+                "title": item.get("title", ""),
+                "product_id": product_id 
             })
         
         return jsonify({"results": final_list})
