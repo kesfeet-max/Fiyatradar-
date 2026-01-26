@@ -17,17 +17,23 @@ def parse_price(price_str):
         return int(val)
     except: return 0
 
-def clean_google_url(google_url):
-    """Reklam linkini ayıklar ve temiz ürün linkini döndürür."""
+def extract_clean_link(google_url):
+    """Google yönlendirmesini sunucu tarafında çözer."""
+    if not google_url: return ""
     try:
-        if "google.com/url?" in google_url:
-            parsed = urlparse(google_url)
-            # adurl veya url parametresi gerçek adrestir
-            actual = parse_qs(parsed.query).get('adurl', [None])[0] or \
-                     parse_qs(parsed.query).get('url', [None])[0]
-            if actual:
-                return unquote(actual).split('?')[0] # Takip kodlarını atar
-    except: pass
+        # 1. Adım: URL içindeki 'adurl' veya 'url' parametresini ayıkla
+        parsed = urlparse(google_url)
+        queries = parse_qs(parsed.query)
+        actual_url = queries.get('adurl', [None])[0] or queries.get('url', [None])[0] or queries.get('q', [None])[0]
+        
+        if actual_url:
+            actual_url = unquote(actual_url)
+            # 2. Adım: Eğer link hala bir Google yönlendirmesiyse (iç içe geçmişse) temizle
+            if "google.com" in actual_url and "url=" in actual_url:
+                return extract_clean_link(actual_url)
+            return actual_url.split('?')[0] # Takip kodlarını atar, saf ürün linkini bırakır
+    except:
+        pass
     return google_url
 
 @app.route("/compare", methods=["POST"])
@@ -41,14 +47,13 @@ def compare():
             "engine": "google_shopping",
             "q": original_title,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr"
+            "hl": "tr", "gl": "tr", "num": "15"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
         final_list = []
-        # Senin yasaklı listen
         forbidden = {"kordon", "kayış", "silikon", "kılıf", "koruyucu", "cam", "yedek", "parça", "aparat", "aksesuar"}
 
         for item in results:
@@ -57,21 +62,19 @@ def compare():
             
             if item_price == 0: continue
             if any(f in item_title for f in forbidden) and not any(f in original_title for f in forbidden): continue
-            
-            # --- İCRAAT BURADA ---
+
+            # LİNK BURADA TEMİZLENİYOR
             raw_link = item.get("link", "")
-            safe_link = clean_google_url(raw_link)
+            safe_link = extract_clean_link(raw_link)
 
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": item.get("price"),
                 "image": item.get("thumbnail"),
-                "raw_price": item_price,
-                "link": safe_link # Eklentiye temiz link gidiyor
+                "link": safe_link
             })
         
-        final_list.sort(key=lambda x: x['raw_price'])
-        return jsonify({"results": final_list[:10]})
+        return jsonify({"results": final_list})
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
