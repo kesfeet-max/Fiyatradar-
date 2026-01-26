@@ -12,11 +12,13 @@ SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201
 def compare():
     try:
         data = request.get_json()
-        search_query = data.get("title", "")
-        
+        # Başlıktaki gereksiz kelimeleri (Sıfır, Yeni, Fırsat vb.) temizle
+        raw_title = data.get("title", "")
+        clean_query = " ".join(raw_title.split()[:5]) 
+
         params = {
             "engine": "google_shopping",
-            "q": search_query,
+            "q": clean_query,
             "api_key": SERP_API_KEY,
             "hl": "tr", "gl": "tr"
         }
@@ -24,20 +26,17 @@ def compare():
         response = requests.get("https://serpapi.com/search.json", params=params)
         results = response.json().get("shopping_results", [])
         
-        final_list = []
-        for item in results[:10]:
-            # KRİTİK VERİ: Ürün ID'sini alıyoruz (Bizi kategori sayfasından kurtaracak olan bu)
-            product_id = item.get("product_id", "")
-            
-            final_list.append({
-                "site": item.get("source", "Mağaza"),
-                "price": item.get("price", "Fiyat Yok"),
+        output = []
+        for item in results[:8]:
+            # Hiçbir Google linkini göndermiyoruz! Sadece mağaza ve temiz başlık.
+            output.append({
+                "site": item.get("source", ""),
+                "price": item.get("price", ""),
                 "image": item.get("thumbnail", ""),
-                "title": item.get("title", ""),
-                "product_id": product_id 
+                "title": item.get("title", "")
             })
         
-        return jsonify({"results": final_list})
+        return jsonify({"results": output})
     except Exception as e:
         return jsonify({"results": [], "error": str(e)})
 
