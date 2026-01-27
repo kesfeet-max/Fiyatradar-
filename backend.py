@@ -49,3 +49,53 @@ def get_offers(immersive_api_url):
     output = []
 
     for offer in offers:
+        merchant = offer.get("merchant", {})
+        output.append({
+            "site": merchant.get("name", ""),
+            "price": offer.get("price", ""),
+            "url": offer.get("link", ""),
+            "image": offer.get("thumbnail", "")
+        })
+
+    return output
+
+
+# -----------------------------
+# API Endpoint
+# -----------------------------
+@app.route("/compare", methods=["POST"])
+def compare():
+    try:
+        data = request.get_json()
+        query = data.get("title", "")
+
+        if not query:
+            return jsonify({"results": [], "error": "Ürün adı boş"}), 400
+
+        product = search_product(query)
+        if not product:
+            return jsonify({"results": [], "error": "Ürün bulunamadı"}), 404
+
+        immersive_api = product.get("serpapi_immersive_product_api")
+        if not immersive_api:
+            return jsonify({"results": [], "error": "Satıcı bilgisi yok"}), 404
+
+        offers = get_offers(immersive_api)
+
+        return jsonify({
+            "product": {
+                "title": product.get("title", ""),
+                "image": product.get("thumbnail", "")
+            },
+            "results": offers
+        })
+
+    except Exception as e:
+        return jsonify({"results": [], "error": str(e)}), 500
+
+
+# -----------------------------
+# Lokal çalıştırma
+# -----------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
