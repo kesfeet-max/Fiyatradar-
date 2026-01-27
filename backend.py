@@ -1,85 +1,44 @@
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import re
-from urllib.parse import urlparse, parse_qs, unquote
-import os
 
 app = Flask(__name__)
 CORS(app)
 
-SERP_API_KEY = os.getenv("SERP_API_KEY", "BURAYA_API_KEYİNİ_YAZ")
+SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
-# Google redirect link temizleyici
-def clean_google_url(link):
-    try:
-        parsed = urlparse(link)
-        qs = parse_qs(parsed.query)
-        if "q" in qs:
-            return unquote(qs["q"][0])
-        return link
-    except:
-        return link
+# -----------------------------
+# Google Shopping arama
+# -----------------------------
+def search_product(query):
+    params = {
+        "engine": "google_shopping",
+        "q": query,
+        "api_key": SERP_API_KEY,
+        "hl": "tr",
+        "gl": "tr"
+    }
 
-# En iyi linki seç
-def extract_best_link(item):
-    raw_link = (
-        item.get("link") or
-        item.get("product_link") or
-        item.get("redirect_link") or
-        ""
-    )
+    r = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
+    data = r.json()
 
-    if not raw_link:
-        return ""
+    results = data.get("shopping_results", [])
+    if not results:
+        return None
 
-    return clean_google_url(raw_link)
+    return results[0]  # En üstteki ürünü alıyoruz
 
-# Render ana sayfa kontrolü için
-@app.route("/", methods=["GET"])
-def home():
-    return "Fiyat Radarı Backend Çalışıyor", 200
 
-@app.route("/compare", methods=["POST"])
-def compare():
-    try:
-        data = request.get_json()
-        search_query = data.get("title", "")
+# -----------------------------
+# Satıcı linklerini çek
+# -----------------------------
+def get_offers(immersive_api_url):
+    r = requests.get(immersive_api_url, timeout=15)
+    data = r.json()
 
-        params = {
-            "engine": "google_shopping",
-            "q": search_query,
-            "api_key": SERP_API_KEY,
-            "hl": "tr",
-            "gl": "tr"
-        }
+    offers = data.get("offers", [])
+    output = []
 
-        response = requests.get("https://serpapi.com/search.json", params=params, timeout=20)
-        results = response.json().get("shopping_results", [])
-
-        output = []
-        for item in results[:10]:
-            clean_link = extract_best_link(item)
-
-            product_id = ""
-            id_match = re.search(r'p-(\d+)|/(\d{7,})', clean_link)
-            if id_match:
-                product_id = id_match.group(1) or id_match.group(2)
-
-            output.append({
-                "site": item.get("source", ""),
-                "price": item.get("price", ""),
-                "image": item.get("thumbnail", ""),
-                "p_id": product_id,
-                "title": item.get("title", ""),
-                "url": clean_link
-            })
-
-        return jsonify({"results": output})
-
-    except Exception as e:
-        return jsonify({"results": [], "error": str(e)}), 500
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    for offer in offers:
+        output.append({
+            "site": offer.get("merchant", {}).
