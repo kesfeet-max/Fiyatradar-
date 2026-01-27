@@ -19,6 +19,26 @@ def clean_google_url(link):
     except:
         return link
 
+def extract_best_link(item):
+    """
+    SerpAPI farklı alanlarda link döndürüyor
+    Öncelik sırası:
+    1. link
+    2. product_link
+    3. redirect_link
+    """
+    raw_link = (
+        item.get("link") or
+        item.get("product_link") or
+        item.get("redirect_link") or
+        ""
+    )
+
+    if not raw_link:
+        return ""
+
+    return clean_google_url(raw_link)
+
 @app.route("/compare", methods=["POST"])
 def compare():
     try:
@@ -38,8 +58,7 @@ def compare():
         
         output = []
         for item in results[:10]:
-            raw_link = item.get("link", "")
-            clean_link = clean_google_url(raw_link)
+            clean_link = extract_best_link(item)
 
             product_id = ""
             id_match = re.search(r'p-(\d+)|/(\d{7,})', clean_link)
@@ -51,13 +70,4 @@ def compare():
                 "price": item.get("price", ""),
                 "image": item.get("thumbnail", ""),
                 "p_id": product_id,
-                "title": item.get("title", ""),
-                "url": clean_link   # 🔥 DİREKT ÜRÜN LİNKİ
-            })
-        
-        return jsonify({"results": output})
-    except Exception as e:
-        return jsonify({"results": [], "error": str(e)})
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=10000)
+                "title": item.get("title
