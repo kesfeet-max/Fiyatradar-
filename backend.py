@@ -7,6 +7,15 @@ CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
 
+
+# -----------------------------
+# Ana sayfa (Render için 404 yerine 200 dönsün)
+# -----------------------------
+@app.route("/", methods=["GET"])
+def home():
+    return "Fiyat Radarı Backend Çalışıyor", 200
+
+
 # -----------------------------
 # Google Shopping arama
 # -----------------------------
@@ -26,7 +35,7 @@ def search_product(query):
     if not results:
         return None
 
-    return results[0]  # En üstteki ürünü alıyoruz
+    return results[0]
 
 
 # -----------------------------
@@ -40,5 +49,3 @@ def get_offers(immersive_api_url):
     output = []
 
     for offer in offers:
-        output.append({
-            "site": offer.get("merchant", {}).
