@@ -2,11 +2,22 @@ import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
 
 SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
+
+def clean_google_url(link):
+    try:
+        parsed = urlparse(link)
+        qs = parse_qs(parsed.query)
+        if "q" in qs:
+            return unquote(qs["q"][0])
+        return link
+    except:
+        return link
 
 @app.route("/compare", methods=["POST"])
 def compare():
@@ -18,7 +29,8 @@ def compare():
             "engine": "google_shopping",
             "q": search_query,
             "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr"
+            "hl": "tr",
+            "gl": "tr"
         }
 
         response = requests.get("https://serpapi.com/search.json", params=params)
@@ -26,13 +38,11 @@ def compare():
         
         output = []
         for item in results[:10]:
-            # Linkin içinden rakamlardan oluşan ürün ID'sini çekiyoruz
-            # Örn: .../p-123456 veya .../detail/7890
             raw_link = item.get("link", "")
+            clean_link = clean_google_url(raw_link)
+
             product_id = ""
-            
-            # Trendyol ve benzeri siteler için linkteki sayı dizisini yakala
-            id_match = re.search(r'p-(\d+)|/(\d{7,})', raw_link)
+            id_match = re.search(r'p-(\d+)|/(\d{7,})', clean_link)
             if id_match:
                 product_id = id_match.group(1) or id_match.group(2)
 
@@ -40,8 +50,9 @@ def compare():
                 "site": item.get("source", ""),
                 "price": item.get("price", ""),
                 "image": item.get("thumbnail", ""),
-                "p_id": product_id, # Saf kimlik bilgisi
-                "title": item.get("title", "")
+                "p_id": product_id,
+                "title": item.get("title", ""),
+                "url": clean_link   # 🔥 DİREKT ÜRÜN LİNKİ
             })
         
         return jsonify({"results": output})
