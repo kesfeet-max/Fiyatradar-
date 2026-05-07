@@ -20,7 +20,7 @@ def compare():
     if request.method == "OPTIONS": return jsonify({"status": "ok"}), 200
     try:
         data = request.get_json()
-        # Eklentiden gelen ham tarama sonuçlarını alıyoruz
+        # Eklentinin tarayıcıdan topladığı ham verileri alıyoruz
         raw_results = data.get("raw_results", [])
         current_price = clean_price(data.get("price", "0"))
 
@@ -28,8 +28,8 @@ def compare():
         for item in raw_results:
             p_val = clean_price(item.get("price"))
             
-            # Ticari Filtre: Aksesuar koruması ve mantıksız fiyatlar
-            if current_price > 0 and (p_val < current_price * 0.5 or p_val > current_price * 1.5):
+            # Fiyat Filtresi: Çok düşükse aksesuardır, gösterme
+            if current_price > 0 and (p_val < current_price * 0.5):
                 continue
             
             final_list.append({
@@ -41,6 +41,7 @@ def compare():
                 "title": item.get("title")
             })
 
+        # En ucuzu en başa al (Gerçek Cimri mantığı)
         final_list.sort(key=lambda x: x['price_value'])
         return jsonify({"results": final_list[:10]})
 
