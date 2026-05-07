@@ -18,13 +18,17 @@ def clean_price(price_str):
     except:
         return 0
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "ok"}), 200
+
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
     if request.method == "OPTIONS": return jsonify({"status": "ok"}), 200
     try:
         data = request.get_json()
         title = data.get("title", "")
-        # Eklentiden gelen fiyatı al
+        # Trendyol fiyatını sayıya çevir (Örn: 37615.0)
         current_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -41,21 +45,19 @@ def compare():
         for item in results:
             p_val = clean_price(item.get("price", "0"))
             
-            # --- %100 KESİN FİLTRE ---
-            # Eğer ürün 50.000 TL'den pahalıysa (Robot süpürge için bu imkansız), ASLA GÖSTERME.
-            if p_val > 50000:
-                continue
-
-            # Eğer ana fiyatı okuyabildiysek, onun %50 fazlasından pahalı olanı GÖSTERME.
-            if current_price > 0 and p_val > (current_price * 1.5):
-                continue
+            # --- AKILLI ANALİZ FILTRESI ---
+            if current_price > 0:
+                # 1. Çok Pahalıları At: %50 fazlasından pahalıysa at.
+                if p_val > (current_price * 1.5): continue
+                # 2. Aksesuarları At (Çok Ucuzlar): %40'ından daha ucuzsa (37bin vs 300tl gibi) at.
+                if p_val < (current_price * 0.4): continue
             
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": item.get("price"),
                 "price_value": p_val,
                 "image": item.get("thumbnail"),
-                "link": item.get("link", ""),
+                "link": item.get("link", ""), # SerpApi'nin verdiği ham link
                 "title": item.get("title")
             })
         
