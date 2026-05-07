@@ -3,36 +3,27 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import re
-from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
 
-SERP_API_KEY = "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201"
+# Senin yeni profesyonel anahtarın
+RAPIDAPI_KEY = "f64caf4ccfmsh09240838e483812p1878e8jsneb770485a2ac"
+RAPIDAPI_HOST = "bluecart.p.rapidapi.com"
 
 def clean_price(price_str):
     if not price_str or price_str == "0": return 0
     try:
+        # Fiyatı sayıya çevirme (TL, nokta, virgül temizliği)
         s = str(price_str).replace('TL', '').replace(' ', '').replace('.', '').replace(',', '.').strip()
         s = re.sub(r'[^\d.]', '', s)
         return float(s)
     except:
         return 0
 
-def get_direct_url(url):
-    """Google'ın karmaşık yönlendirme linkini temizler ve asıl mağaza linkini bulur."""
-    if not url: return ""
-    if "google.com/url" in url:
-        parsed = urlparse(url)
-        params = parse_qs(parsed.query)
-        actual_url = params.get('q') or params.get('url')
-        if actual_url:
-            return unquote(actual_url[0])
-    return url
-
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok", "message": "Fiyat Radarı Pro API Aktif"}), 200
 
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
@@ -40,43 +31,58 @@ def compare():
     try:
         data = request.get_json()
         title = data.get("title", "")
-        # Trendyol fiyatını sayıya çevir
         current_price = clean_price(data.get("price", "0"))
         
-        params = {
-            "engine": "google_shopping",
-            "q": title,
-            "api_key": SERP_API_KEY,
-            "hl": "tr", "gl": "tr", "direct_link": True
+        # Bluecart API sorgusu
+        url = "https://bluecart.p.rapidapi.com/request"
+        querystring = {
+            "type": "search",
+            "search_term": title,
+            "sort_by": "price_low_to_high",
+            "customer_zipcode": "42000" # Konya yerel fiyatları için
         }
 
-        response = requests.get("https://serpapi.com/search.json", params=params)
-        results = response.json().get("shopping_results", [])
+        headers = {
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
+            "X-RapidAPI-Host": RAPIDAPI_HOST
+        }
+
+        response = requests.get(url, headers=headers, params=querystring)
+        api_data = response.json()
         
+        # API'den gelen sonuçları işle
+        results = api_data.get("search_results", [])
         final_list = []
+        
         for item in results:
-            p_val = clean_price(item.get("price", "0"))
+            product = item.get("product", {})
+            offers = item.get("offers", {}).get("primary", {})
             
-            # --- SERT AKSESUAR FİLTRESİ ---
-            # Eğer ürün fiyatı baktığımız ürünün yarısından bile ucuzsa (37bin vs 500tl) LİSTEYE ALMA
-            if current_price > 100 and p_val < (current_price * 0.5):
+            p_raw = offers.get("price", "0")
+            p_val = clean_price(p_raw)
+            
+            # --- PROFESYONEL FİLTRE ---
+            # Eğer ürün baktığımızın yarısından ucuzsa aksesuardır, gösterme.
+            if current_price > 0 and p_val < (current_price * 0.7):
                 continue
-            
-            # Linki temizle
-            raw_link = item.get("link") or item.get("product_link") or ""
-            clean_link = get_direct_url(raw_link)
+            # Çok uçuk fiyatları da ele
+            if current_price > 0 and p_val > (current_price * 1.4):
+                continue
 
             final_list.append({
-                "site": item.get("source", "Mağaza"),
-                "price": item.get("price"),
+                "site": offers.get("seller", "Mağaza"),
+                "price": f"{p_val} TL",
                 "price_value": p_val,
-                "image": item.get("thumbnail"),
-                "link": clean_link,
-                "title": item.get("title")
+                "image": product.get("main_image"),
+                "link": product.get("link"), # Bluecart doğrudan mağaza linkini verir
+                "title": product.get("title")
             })
         
+        # En ucuzdan pahalıya sırala
         final_list.sort(key=lambda x: x['price_value'] if x['price_value'] > 0 else 999999)
-        return jsonify({"results": final_list})
+        
+        return jsonify({"results": final_list[:10]}) # En iyi 10 sonucu gönder
+        
     except Exception as e:
         return jsonify({"results": [], "error": str(e)}), 500
 
