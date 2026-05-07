@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import re
+from urllib.parse import urlparse, parse_qs, unquote
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +19,18 @@ def clean_price(price_str):
     except:
         return 0
 
+def extract_direct_url(google_url):
+    """Google'ın yönlendirme linkinden gerçek mağaza linkini çıkarır."""
+    if not google_url: return ""
+    if "google.com/url" in google_url:
+        parsed_url = urlparse(google_url)
+        # 'q' veya 'url' parametresini ara
+        query_params = parse_qs(parsed_url.query)
+        actual_url = query_params.get('q') or query_params.get('url')
+        if actual_url:
+            return unquote(actual_url[0])
+    return google_url
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "ok"}), 200
@@ -28,7 +41,6 @@ def compare():
     try:
         data = request.get_json()
         title = data.get("title", "")
-        # Trendyol fiyatını sayıya çevir (Örn: 37615.0)
         current_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -45,19 +57,20 @@ def compare():
         for item in results:
             p_val = clean_price(item.get("price", "0"))
             
-            # --- AKILLI ANALİZ FILTRESI ---
+            # Aksesuar ve uçuk fiyat filtresi
             if current_price > 0:
-                # 1. Çok Pahalıları At: %50 fazlasından pahalıysa at.
-                if p_val > (current_price * 1.5): continue
-                # 2. Aksesuarları At (Çok Ucuzlar): %40'ından daha ucuzsa (37bin vs 300tl gibi) at.
-                if p_val < (current_price * 0.4): continue
+                if p_val > (current_price * 1.5) or p_val < (current_price * 0.4): continue
             
+            # LİNK TEMİZLEME BURADA YAPILIYOR
+            raw_link = item.get("link") or item.get("product_link") or ""
+            direct_link = extract_direct_url(raw_link)
+
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": item.get("price"),
                 "price_value": p_val,
                 "image": item.get("thumbnail"),
-                "link": item.get("link", ""), # SerpApi'nin verdiği ham link
+                "link": direct_link, # Artık temizlenmiş link gidiyor
                 "title": item.get("title")
             })
         
