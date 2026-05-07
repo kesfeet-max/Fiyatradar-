@@ -1,4 +1,3 @@
-# backend.py - Tam Güncel Hal
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -28,7 +27,7 @@ def compare():
     try:
         data = request.get_json()
         original_title = data.get("title", "")
-        # Trendyol'dan gelen fiyatı sayıya çeviriyoruz
+        # Trendyol'dan gelen fiyatı sayıya çeviriyoruz (Filtreleme için)
         original_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -47,20 +46,24 @@ def compare():
             price_val = clean_price(price_raw)
             
             # --- AKILLI FİLTRELEME ---
-            # Baktığımız fiyattan %40 daha ucuz veya %60 daha pahalı olanları 'hatalı sonuç' diye eliyoruz
+            # Baktığın fiyattan aşırı uzak olanları (aksesuar veya alakasız pahalı ürünler) eliyoruz
             if original_price > 0:
                 if price_val < (original_price * 0.6) or price_val > (original_price * 1.6):
                     continue
+
+            # Linki garantiye alalım
+            final_link = item.get("merchant_link") or item.get("link") or ""
 
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": price_raw,
                 "price_value": price_val,
                 "image": item.get("thumbnail"),
-                "link": item.get("link"),
+                "link": final_link,
                 "title": item.get("title")
             })
         
+        # En ucuz en üstte
         final_list.sort(key=lambda x: x['price_value'] if x['price_value'] > 0 else float('inf'))
         return jsonify({"results": final_list})
     except Exception as e:
