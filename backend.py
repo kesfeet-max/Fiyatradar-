@@ -7,9 +7,6 @@ import re
 app = Flask(__name__)
 CORS(app)
 
-# Profesyonel API Anahtarı (Sadece yedek olarak duracak)
-RAPIDAPI_KEY = "f64caf4ccfmsh09240838e483812p1878e8jsneb770485a2ac"
-
 def clean_price(price_str):
     if not price_str: return 0
     try:
@@ -26,57 +23,44 @@ def compare():
         title = data.get("title", "")
         current_price = clean_price(data.get("price", "0"))
         
-        # 1. ADIM: Ürün ismini 'saf' hale getir (Marka + Model)
-        # Karmaşık teknik detayları temizle ki her sitede ortak bulunsun
-        clean_title = " ".join(title.split()[:4]) 
+        # BİZİM ÖZEL ALGORİTMAMIZ: 
+        # Marka ve model ismini ayıklayıp doğrudan pazar yerlerine "ateş" edeceğiz
+        search_query = " ".join(title.split()[:4])
         
-        # 2. ADIM: "Cimri Modu" - Çoklu Kaynak Taraması
-        # Sadece bir yere bakmıyoruz, RapidAPI üzerinden 'shopping' motorunu en geniş haliyle zorluyoruz
-        url = "https://bluecart.p.rapidapi.com/request"
-        querystring = {
-            "type": "search",
-            "search_term": clean_title,
-            "google_domain": "google.com.tr",
-            "gl": "tr",
-            "hl": "tr",
-            "sort_by": "price_low_to_high"
-        }
+        # İleride buraya 'TrendyolScraper', 'HepsiburadaScraper' gibi kendi fonksiyonlarımızı ekleyeceğiz.
+        # Şimdilik en hızlı sonuç için SerpApi'yi 'Direct Link' modunda en profesyonel haliyle kullanıyoruz.
         
-        headers = {
-            "X-RapidAPI-Key": RAPIDAPI_KEY,
-            "X-RapidAPI-Host": "bluecart.p.rapidapi.com"
+        params = {
+            "engine": "google_shopping",
+            "q": search_query,
+            "api_key": "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201",
+            "hl": "tr", "gl": "tr",
+            "direct_link": True # Google'ı pas geç, doğrudan mağazayı getir
         }
 
-        # Veriyi çek
-        response = requests.get(url, headers=headers, params=querystring, timeout=15)
-        api_data = response.json()
+        response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
+        results = response.json().get("shopping_results", [])
         
-        results = api_data.get("search_results", [])
         final_list = []
-        
         for item in results:
-            prod = item.get("product", {})
-            offer = item.get("offers", {}).get("primary", {})
+            p_val = clean_price(item.get("price", "0"))
+            source = item.get("source", "").lower()
             
-            p_val = clean_price(offer.get("price", "0"))
-            store = offer.get("seller", "Mağaza")
+            # Letgo vb. çöpleri temizle
+            if any(x in source for x in ["letgo", "dolap", "sahibinden"]): continue
             
-            # --- TİCARİ SÜZGEÇ ---
-            # İkinci el sitelerini (Letgo vb.) ve geçersiz fiyatları Cimri gibi eliyoruz
-            if any(x in store.lower() for x in ["letgo", "dolap", "sahibinden", "gardrops"]): continue
-            if current_price > 0 and (p_val < current_price * 0.6): continue # Aksesuar engeli
+            # Baktığımız ürünle fiyat uyumunu kontrol et (Aksesuar koruması)
+            if current_price > 0 and (p_val < current_price * 0.6 or p_val > current_price * 1.5): continue
 
-            # Linki ve veriyi paketle
             final_list.append({
-                "site": store,
+                "site": item.get("source", "Mağaza"),
                 "price": f"{p_val} TL",
                 "price_value": p_val,
-                "image": prod.get("main_image"),
-                "link": prod.get("link"), # DOĞRUDAN MAĞAZA LİNKİ
-                "title": prod.get("title")
+                "image": item.get("thumbnail"),
+                "link": item.get("link"), # direct_link sayesinde ARTIK GOOGLE'A ATMAZ
+                "title": item.get("title")
             })
 
-        # Fiyatları sırala (Cimri'nin en sevdiği iş)
         final_list.sort(key=lambda x: x['price_value'])
         
         return jsonify({"results": final_list[:10]})
