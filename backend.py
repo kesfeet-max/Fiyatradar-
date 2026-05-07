@@ -19,17 +19,16 @@ def clean_price(price_str):
     except:
         return 0
 
-def extract_direct_url(google_url):
-    """Google'ın yönlendirme linkinden gerçek mağaza linkini çıkarır."""
-    if not google_url: return ""
-    if "google.com/url" in google_url:
-        parsed_url = urlparse(google_url)
-        # 'q' veya 'url' parametresini ara
-        query_params = parse_qs(parsed_url.query)
-        actual_url = query_params.get('q') or query_params.get('url')
+def get_direct_url(url):
+    """Google'ın karmaşık yönlendirme linkini temizler ve asıl mağaza linkini bulur."""
+    if not url: return ""
+    if "google.com/url" in url:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        actual_url = params.get('q') or params.get('url')
         if actual_url:
             return unquote(actual_url[0])
-    return google_url
+    return url
 
 @app.route("/", methods=["GET"])
 def home():
@@ -41,6 +40,7 @@ def compare():
     try:
         data = request.get_json()
         title = data.get("title", "")
+        # Trendyol fiyatını sayıya çevir
         current_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -57,20 +57,21 @@ def compare():
         for item in results:
             p_val = clean_price(item.get("price", "0"))
             
-            # Aksesuar ve uçuk fiyat filtresi
-            if current_price > 0:
-                if p_val > (current_price * 1.5) or p_val < (current_price * 0.4): continue
+            # --- SERT AKSESUAR FİLTRESİ ---
+            # Eğer ürün fiyatı baktığımız ürünün yarısından bile ucuzsa (37bin vs 500tl) LİSTEYE ALMA
+            if current_price > 100 and p_val < (current_price * 0.5):
+                continue
             
-            # LİNK TEMİZLEME BURADA YAPILIYOR
+            # Linki temizle
             raw_link = item.get("link") or item.get("product_link") or ""
-            direct_link = extract_direct_url(raw_link)
+            clean_link = get_direct_url(raw_link)
 
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": item.get("price"),
                 "price_value": p_val,
                 "image": item.get("thumbnail"),
-                "link": direct_link, # Artık temizlenmiş link gidiyor
+                "link": clean_link,
                 "title": item.get("title")
             })
         
