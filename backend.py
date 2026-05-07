@@ -33,7 +33,7 @@ def compare():
     try:
         data = request.get_json()
         original_title = data.get("title", "")
-        # Trendyol'daki ürünün fiyatını alıyoruz
+        # Trendyol'daki ürünün fiyatını baz alıyoruz
         original_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -51,12 +51,12 @@ def compare():
             price_raw = item.get("price", "Fiyat Yok")
             price_val = clean_price(price_raw)
             
-            # --- PROFESYONEL FİLTRELEME ---
-            # Eğer bulunan ürün, baktığımız üründen %35 daha pahalıysa LİSTEYE ALMA
-            if original_price > 0 and price_val > (original_price * 1.35):
+            # --- AKILLI FİLTRELEME ---
+            # Eğer bulunan ürün, baktığımız üründen %30 daha pahalıysa LİSTEYE ALMA
+            # (Aksesuar veya yanlış eşleşmeleri engeller)
+            if original_price > 0 and price_val > (original_price * 1.3):
                 continue
             
-            # Linki ve siteyi garantiye alalım
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": price_raw,
