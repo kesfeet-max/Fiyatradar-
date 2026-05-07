@@ -7,7 +7,7 @@ import re
 app = Flask(__name__)
 CORS(app)
 
-# Bu anahtar sadece destekleyici veri için kullanılacak
+# Profesyonel API Anahtarı (Sadece yedek olarak duracak)
 RAPIDAPI_KEY = "f64caf4ccfmsh09240838e483812p1878e8jsneb770485a2ac"
 
 def clean_price(price_str):
@@ -18,28 +18,24 @@ def clean_price(price_str):
         return float(s)
     except: return 0
 
-def extract_model(title):
-    # Ürünün kimliğini belirleyen en önemli 3-4 kelimeyi ayıklar
-    # Örn: "Casper Excalibur G870.1245-BV60X-B" -> "Casper Excalibur G870"
-    words = title.split()
-    return " ".join(words[:4])
-
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
     if request.method == "OPTIONS": return jsonify({"status": "ok"}), 200
     try:
         data = request.get_json()
-        full_title = data.get("title", "")
+        title = data.get("title", "")
         current_price = clean_price(data.get("price", "0"))
         
-        target_model = extract_model(full_title)
+        # 1. ADIM: Ürün ismini 'saf' hale getir (Marka + Model)
+        # Karmaşık teknik detayları temizle ki her sitede ortak bulunsun
+        clean_title = " ".join(title.split()[:4]) 
         
-        # PRO SİSTEM: Bluecart üzerinden 'ÖZEL TEKLİFLER' (Offers) sorgusu
-        # Bu sorgu doğrudan Trendyol/Hepsiburada gibi yerlerin verisini getirir
+        # 2. ADIM: "Cimri Modu" - Çoklu Kaynak Taraması
+        # Sadece bir yere bakmıyoruz, RapidAPI üzerinden 'shopping' motorunu en geniş haliyle zorluyoruz
         url = "https://bluecart.p.rapidapi.com/request"
         querystring = {
             "type": "search",
-            "search_term": target_model,
+            "search_term": clean_title,
             "google_domain": "google.com.tr",
             "gl": "tr",
             "hl": "tr",
@@ -51,43 +47,39 @@ def compare():
             "X-RapidAPI-Host": "bluecart.p.rapidapi.com"
         }
 
-        response = requests.get(url, headers=headers, params=querystring, timeout=12)
+        # Veriyi çek
+        response = requests.get(url, headers=headers, params=querystring, timeout=15)
         api_data = response.json()
         
         results = api_data.get("search_results", [])
-        final_results = []
+        final_list = []
         
         for item in results:
             prod = item.get("product", {})
             offer = item.get("offers", {}).get("primary", {})
             
-            price_val = clean_price(offer.get("price", "0"))
-            seller = offer.get("seller", "Mağaza")
+            p_val = clean_price(offer.get("price", "0"))
+            store = offer.get("seller", "Mağaza")
             
-            # --- TİCARİ FİLTRELEME (Cimri Standartı) ---
-            # 1. İkinci el sitelerini tamamen yasakla (Gelir elde edemezsin)
-            if any(x in seller.lower() for x in ["letgo", "dolap", "sahibinden", "gardrops"]):
-                continue
-            
-            # 2. Ürün doğruluğu kontrolü: Fiyat baktığımızdan çok düşükse o parçadır/aksesuardır
-            if current_price > 0 and price_val < (current_price * 0.5):
-                continue
+            # --- TİCARİ SÜZGEÇ ---
+            # İkinci el sitelerini (Letgo vb.) ve geçersiz fiyatları Cimri gibi eliyoruz
+            if any(x in store.lower() for x in ["letgo", "dolap", "sahibinden", "gardrops"]): continue
+            if current_price > 0 and (p_val < current_price * 0.6): continue # Aksesuar engeli
 
-            link = prod.get("link")
-            if link and link.startswith("http"):
-                final_results.append({
-                    "site": seller,
-                    "price": f"{price_val} TL",
-                    "price_value": price_val,
-                    "image": prod.get("main_image"),
-                    "link": link, # Bu link üzerinden ileride Affiliate geliri tanımlayacağız
-                    "title": prod.get("title")
-                })
+            # Linki ve veriyi paketle
+            final_list.append({
+                "site": store,
+                "price": f"{p_val} TL",
+                "price_value": p_val,
+                "image": prod.get("main_image"),
+                "link": prod.get("link"), # DOĞRUDAN MAĞAZA LİNKİ
+                "title": prod.get("title")
+            })
 
-        # En ucuzu başa al
-        final_results.sort(key=lambda x: x['price_value'])
+        # Fiyatları sırala (Cimri'nin en sevdiği iş)
+        final_list.sort(key=lambda x: x['price_value'])
         
-        return jsonify({"results": final_results[:10]})
+        return jsonify({"results": final_list[:10]})
 
     except Exception as e:
         return jsonify({"results": [], "error": str(e)}), 500
