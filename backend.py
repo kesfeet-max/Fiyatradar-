@@ -3,10 +3,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import re
-from bs4 import BeautifulSoup # Sayfaları kazımak için gerekli kütüphane
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 CORS(app)
+
+# Tarayıcı gibi görünmek için gerekli kimlik bilgisi
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+}
 
 def clean_price(price_str):
     if not price_str: return 0
@@ -16,15 +21,41 @@ def clean_price(price_str):
         return float(s)
     except: return 0
 
-# --- CİMRİ GİBİ KENDİ BOTLARIMIZ ---
-def t_yol_search(query):
-    """Trendyol üzerinde doğrudan ürün arar (Affiliate potansiyelli)"""
+# --- ÖZEL BOTLAR (SCRAPERS) ---
+
+def scrape_trendyol(query):
+    """Trendyol'dan doğrudan ilk ürünü ve fiyatını çeker"""
     try:
-        search_url = f"https://www.trendyol.com/sr?q={query.replace(' ', '+')}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        res = requests.get(search_url, headers=headers, timeout=5)
-        # Burası ileride daha detaylı bir kazıma motoruna dönüşecek
-        return search_url
+        url = f"https://www.trendyol.com/sr?q={query.replace(' ', '%20')}&os=1"
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # İlk ürün kartını bul
+        card = soup.select_one(".p-card-wrppr")
+        if card:
+            link = "https://www.trendyol.com" + card.select_one("a")['href']
+            price = card.select_one(".prc-box-dscntd").text
+            title = card.select_one(".prdct-desc-cntnr-name").text
+            img = card.select_one(".p-card-img")['src']
+            return {"site": "Trendyol", "price": price, "price_value": clean_price(price), "link": link, "image": img, "title": title}
+    except: return None
+
+def scrape_amazon_tr(query):
+    """Amazon TR'den doğrudan fiyat çeker"""
+    try:
+        url = f"https://www.amazon.com.tr/s?k={query.replace(' ', '+')}"
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        card = soup.select_one(".s-result-item[data-component-type='s-search-result']")
+        if card:
+            link = "https://www.amazon.com.tr" + card.select_one("a.a-link-normal")['href']
+            price_whole = card.select_one(".a-price-whole").text
+            price_fraction = card.select_one(".a-price-fraction").text
+            price = f"{price_whole},{price_fraction} TL"
+            title = card.select_one("h2 span").text
+            img = card.select_one(".s-image")['src']
+            return {"site": "Amazon TR", "price": price, "price_value": clean_price(price), "link": link, "image": img, "title": title}
     except: return None
 
 @app.route("/compare", methods=["POST", "OPTIONS"])
@@ -35,48 +66,22 @@ def compare():
         title = data.get("title", "")
         current_price = clean_price(data.get("price", "0"))
         
-        search_query = " ".join(title.split()[:4])
-        
-        # 1. ADIM: API SORGUSU (Mevcut çalışan düzenin)
-        params = {
-            "engine": "google_shopping",
-            "q": search_query,
-            "api_key": "4c609280bc69c17ee299b38680c879b8f6a43f09eaf7a2f045831f50fc3d1201",
-            "hl": "tr", "gl": "tr",
-            "direct_link": True 
-        }
-
-        response = requests.get("https://serpapi.com/search.json", params=params, timeout=10)
-        results = response.json().get("shopping_results", [])
+        # Arama terimini sadeleştir (Marka + Model)
+        query = " ".join(title.split()[:4])
         
         final_list = []
-        for item in results:
-            p_val = clean_price(item.get("price", "0"))
-            source = item.get("source", "").lower()
-            
-            if any(x in source for x in ["letgo", "dolap", "sahibinden"]): continue
-            if current_price > 0 and (p_val < current_price * 0.6 or p_val > current_price * 1.5): continue
-
-            # --- LİNK DÜZELTME OPERASYONU ---
-            raw_link = item.get("link")
-            # Eğer link boşsa veya yönlendirmeliyse, temiz link haline getiriyoruz
-            if not raw_link or "google.com" in raw_link:
-                # Burası affiliate gelirinin kapısıdır
-                clean_link = t_yol_search(search_query) or raw_link
-            else:
-                clean_link = raw_link
-
-            final_list.append({
-                "site": item.get("source", "Mağaza"),
-                "price": f"{p_val} TL",
-                "price_value": p_val,
-                "image": item.get("thumbnail"),
-                "link": clean_link, # BURASI ARTIK BOŞ SEKME AÇMAMALI
-                "title": item.get("title")
-            })
-
+        
+        # Botları sırayla çalıştır
+        ty = scrape_trendyol(query)
+        if ty: final_list.append(ty)
+        
+        amz = scrape_amazon_tr(query)
+        if amz: final_list.append(amz)
+        
+        # Fiyatı küçükten büyüğe sırala
         final_list.sort(key=lambda x: x['price_value'])
-        return jsonify({"results": final_list[:10]})
+        
+        return jsonify({"results": final_list})
 
     except Exception as e:
         return jsonify({"results": [], "error": str(e)}), 500
