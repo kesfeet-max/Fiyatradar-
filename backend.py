@@ -21,13 +21,19 @@ def clean_price(price_str):
     except:
         return 0
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "ok", "message": "Fiyat Radarı API Aktif 🚀"}), 200
+
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
-    if request.method == "OPTIONS": return jsonify({"status": "ok"}), 200
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+        
     try:
         data = request.get_json()
         original_title = data.get("title", "")
-        # Trendyol'dan gelen fiyatı sayıya çeviriyoruz (Filtreleme için)
+        # Trendyol'daki ürünün fiyatını alıyoruz
         original_price = clean_price(data.get("price", "0"))
         
         params = {
@@ -45,27 +51,26 @@ def compare():
             price_raw = item.get("price", "Fiyat Yok")
             price_val = clean_price(price_raw)
             
-            # --- AKILLI FİLTRELEME ---
-            # Baktığın fiyattan aşırı uzak olanları (aksesuar veya alakasız pahalı ürünler) eliyoruz
-            if original_price > 0:
-                if price_val < (original_price * 0.6) or price_val > (original_price * 1.6):
-                    continue
-
-            # Linki garantiye alalım
-            final_link = item.get("merchant_link") or item.get("link") or ""
-
+            # --- PROFESYONEL FİLTRELEME ---
+            # Eğer bulunan ürün, baktığımız üründen %35 daha pahalıysa LİSTEYE ALMA
+            if original_price > 0 and price_val > (original_price * 1.35):
+                continue
+            
+            # Linki ve siteyi garantiye alalım
             final_list.append({
                 "site": item.get("source", "Mağaza"),
                 "price": price_raw,
                 "price_value": price_val,
                 "image": item.get("thumbnail"),
-                "link": final_link,
-                "title": item.get("title")
+                "link": item.get("link", ""),
+                "title": item.get("title", "")
             })
         
-        # En ucuz en üstte
+        # En ucuzdan pahalıya sırala
         final_list.sort(key=lambda x: x['price_value'] if x['price_value'] > 0 else float('inf'))
+        
         return jsonify({"results": final_list})
+
     except Exception as e:
         return jsonify({"results": [], "error": str(e)}), 500
 
