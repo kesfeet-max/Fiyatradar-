@@ -3,10 +3,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import re
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 CORS(app)
+
+# TİCARİ GELİR KODUN (Buraya ileride Trendyol Partner ID'ni koyacaksın)
+MY_AFFILIATE_ID = "mevlut_kocak_42"
 
 def clean_price(price_str):
     if not price_str: return 0
@@ -16,47 +18,38 @@ def clean_price(price_str):
         return float(s)
     except: return 0
 
-# GERÇEK İNSAN KİMLİĞİ (Headers)
-def get_headers():
-    return {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control": "max-age=0",
-        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "Upgrade-Insecure-Requests": "1"
-    }
-
-def scrape_trendyol(query):
+def get_trendyol_direct(query):
+    """Trendyol'un API'sini taklit ederek doğrudan ürün ve link getirir."""
     try:
-        # Trendyol'un botu anlamaması için arama linkini profesyonelleştirdik
-        url = f"https://www.trendyol.com/sr?q={query.replace(' ', '%20')}&os=1"
-        session = requests.Session()
-        res = session.get(url, headers=get_headers(), timeout=10)
+        # Trendyol arama motoruna doğrudan istek atıyoruz
+        search_url = f"https://public.trendyol.com/discovery-web-search-service/v1/explore?q={query.replace(' ', '%20')}&pi=0&os=1"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json"
+        }
+        res = requests.get(search_url, headers=headers, timeout=10)
+        data = res.json()
         
-        if res.status_code != 200: return None # Engel yendiyse dur
-        
-        soup = BeautifulSoup(res.text, 'html.parser')
-        card = soup.select_one(".p-card-wrppr") # Trendyol'un ürün kartı kodu
-        
-        if card:
-            link = "https://www.trendyol.com" + card.select_one("a")['href']
-            price = card.select_one(".prc-box-dscntd").text
-            title = card.select_one(".prdct-desc-cntnr-name").text
-            # Resim bazen geç yüklenir, o yüzden alternatifleri de aldık
-            img = card.select_one(".p-card-img")['src'] if card.select_one(".p-card-img") else ""
+        products = data.get('productSearchResult', {}).get('products', [])
+        if products:
+            item = products[0] # En üstteki (genelde en alakalı) ürün
+            p_name = item.get('name')
+            p_price = item.get('price', {}).get('sellingPrice')
+            p_url = "https://www.trendyol.com" + item.get('url')
+            p_img = "https://cdn.dsmcdn.com" + item.get('images')[0]
+            
+            # PARA KAZANDIRAN DOKUNUŞ: Linke senin kodunu ekliyoruz
+            affiliate_link = f"{p_url}?boutiqueId=61&merchantId={item.get('merchantId')}&sav={MY_AFFILIATE_ID}"
             
             return {
                 "site": "Trendyol",
-                "price": price,
-                "price_value": clean_price(price),
-                "link": link,
-                "image": img,
-                "title": title
+                "price": f"{p_price} TL",
+                "price_value": p_val if (p_val := clean_price(p_price)) else 0,
+                "link": affiliate_link,
+                "image": p_img,
+                "title": p_name
             }
-    except Exception as e:
-        print(f"Trendyol Hatası: {e}")
-        return None
+    except: return None
 
 @app.route("/compare", methods=["POST", "OPTIONS"])
 def compare():
@@ -66,21 +59,19 @@ def compare():
         title = data.get("title", "")
         current_price = clean_price(data.get("price", "0"))
         
-        # Arama terimini sadeleştir (Örn: Casper Excalibur G870)
+        # Marka + Model
         search_query = " ".join(title.split()[:4])
         
         final_list = []
         
-        # Botu ateşle
-        ty_result = scrape_trendyol(search_query)
-        if ty_result:
-            final_list.append(ty_result)
-            
-        # Amazon TR Botu (Basitleştirilmiş)
-        # İleride buraya Amazon, Hepsiburada eklenecek
+        # 1. Kendi Botumuz (Trendyol)
+        ty = get_trendyol_direct(search_query)
+        if ty: final_list.append(ty)
         
+        # 2. Buraya Hepsiburada ve Amazon botlarını da ekleyeceğiz...
+
         if not final_list:
-            return jsonify({"results": [], "message": "Şu an pazar yerleri yoğun, lütfen tekrar deneyin."})
+            return jsonify({"results": [], "message": "Pazar yerlerinden veri alınamadı."})
 
         return jsonify({"results": final_list})
 
